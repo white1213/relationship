@@ -133,6 +133,82 @@ fun PersonDetailScreen(
                 DetailText(label = "备注", value = it, modifier = Modifier.fillMaxWidth())
             }
 
+            val inferredCandidates = state.inferenceCandidatesFor(person.id)
+            if (inferredCandidates.isNotEmpty()) {
+                HorizontalDivider()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("可能的亲属关系", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        text = "${inferredCandidates.size} 条",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                inferredCandidates.forEach { candidate ->
+                    val otherPersonId = if (candidate.fromPersonId == person.id) {
+                        candidate.toPersonId
+                    } else {
+                        candidate.fromPersonId
+                    }
+                    val otherPerson = state.person(otherPersonId)
+                    if (otherPerson != null) {
+                        Card(modifier = Modifier.fillMaxWidth()) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                ) {
+                                    PersonAvatar(person = otherPerson, size = 44.dp)
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = otherPerson.name,
+                                            style = MaterialTheme.typography.titleMedium,
+                                        )
+                                        Text(
+                                            text = candidate.labelFor(person.id),
+                                            color = MaterialTheme.colorScheme.primary,
+                                            style = MaterialTheme.typography.labelLarge,
+                                        )
+                                    }
+                                    Text(
+                                        text = candidate.confidence.displayName(),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                Text(
+                                    text = "推导依据：${candidate.reason}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End,
+                                ) {
+                                    TextButton(onClick = { onDismissInference(candidate) }) {
+                                        Text("忽略")
+                                    }
+                                    OutlinedButton(
+                                        onClick = { onConfirmInference(candidate) },
+                                    ) {
+                                        Text("添加关系")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             HorizontalDivider()
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -206,82 +282,6 @@ fun PersonDetailScreen(
                                         contentDescription = "删除关系",
                                         tint = MaterialTheme.colorScheme.error,
                                     )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            val inferredCandidates = state.inferenceCandidatesFor(person.id)
-            if (inferredCandidates.isNotEmpty()) {
-                HorizontalDivider()
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Text("可能的亲属关系", style = MaterialTheme.typography.titleLarge)
-                    Text(
-                        text = "${inferredCandidates.size} 条",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                inferredCandidates.forEach { candidate ->
-                    val otherPersonId = if (candidate.fromPersonId == person.id) {
-                        candidate.toPersonId
-                    } else {
-                        candidate.fromPersonId
-                    }
-                    val otherPerson = state.person(otherPersonId)
-                    if (otherPerson != null) {
-                        Card(modifier = Modifier.fillMaxWidth()) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(14.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                ) {
-                                    PersonAvatar(person = otherPerson, size = 44.dp)
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = otherPerson.name,
-                                            style = MaterialTheme.typography.titleMedium,
-                                        )
-                                        Text(
-                                            text = candidate.labelFor(person.id),
-                                            color = MaterialTheme.colorScheme.primary,
-                                            style = MaterialTheme.typography.labelLarge,
-                                        )
-                                    }
-                                    Text(
-                                        text = candidate.confidence.displayName(),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                Text(
-                                    text = "推导依据：${candidate.reason}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.End,
-                                ) {
-                                    TextButton(onClick = { onDismissInference(candidate) }) {
-                                        Text("忽略")
-                                    }
-                                    OutlinedButton(
-                                        onClick = { onConfirmInference(candidate) },
-                                    ) {
-                                        Text("添加关系")
-                                    }
                                 }
                             }
                         }

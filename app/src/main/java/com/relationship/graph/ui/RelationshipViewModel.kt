@@ -90,12 +90,14 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
         repository.relationTypes,
         repository.inferenceDismissals,
     ) { people, relationships, relationTypes, dismissals ->
-        InferenceEngine.infer(
-            people = people,
-            relationships = relationships,
-            relationTypes = relationTypes,
-            dismissals = dismissals,
-        )
+        runCatching {
+            InferenceEngine.infer(
+                people = people,
+                relationships = relationships,
+                relationTypes = relationTypes,
+                dismissals = dismissals,
+            )
+        }.getOrDefault(emptyList())
     }.flowOn(kotlinx.coroutines.Dispatchers.Default)
 
     val uiState: StateFlow<AppUiState> = combine(

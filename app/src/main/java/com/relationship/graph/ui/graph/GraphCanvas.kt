@@ -41,7 +41,10 @@ import com.relationship.graph.data.local.RelationshipEntity
 import com.relationship.graph.data.inference.InferredRelationshipCandidate
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.PI
+import kotlin.math.cos
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 data class GraphEdgeGroup(
     val key: String,
@@ -102,14 +105,18 @@ fun GraphCanvas(
         myPersonId,
         pinnedPositions,
     ) {
-        GraphLayoutEngine.layout(
-            people = people,
-            relationships = relationships,
-            relationTypes = relationTypes,
-            mode = mode,
-            myPersonId = myPersonId,
-            pinnedPositions = pinnedPositions,
-        )
+        runCatching {
+            GraphLayoutEngine.layout(
+                people = people,
+                relationships = relationships,
+                relationTypes = relationTypes,
+                mode = mode,
+                myPersonId = myPersonId,
+                pinnedPositions = pinnedPositions,
+            )
+        }.getOrElse {
+            fallbackLayout(people)
+        }
     }
 
     val nodePositions = remember { mutableStateMapOf<String, Offset>() }
@@ -816,3 +823,20 @@ fun buildEdgeGroups(
 private const val NAME_REVEAL_ZOOM = 0.55f
 private const val DETAIL_REVEAL_ZOOM = 0.9f
 private const val LABEL_REVEAL_ZOOM = 1.15f
+
+private fun fallbackLayout(people: List<PersonEntity>): GraphLayoutResult {
+    val radius = max(140f, people.size * 12f)
+    val positions = people.mapIndexed { index, person ->
+        val angle = if (people.isEmpty()) 0.0 else 2.0 * PI * index / people.size
+        person.id to LayoutPoint(
+            x = (cos(angle) * radius).toFloat(),
+            y = (sin(angle) * radius).toFloat(),
+        )
+    }.toMap()
+    return GraphLayoutResult(
+        positions = positions,
+        routes = emptyList(),
+        generationByPerson = emptyMap(),
+        conflicts = 0,
+    )
+}

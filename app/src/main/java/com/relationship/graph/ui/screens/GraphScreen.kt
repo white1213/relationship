@@ -206,30 +206,34 @@ fun GraphScreen(
             )
         },
         floatingActionButton = {
-            Box {
-                FloatingActionButton(onClick = { addMenuExpanded = true }) {
-                    Icon(Icons.Rounded.Add, contentDescription = "添加")
-                }
-                DropdownMenu(
-                    expanded = addMenuExpanded,
-                    onDismissRequest = { addMenuExpanded = false },
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("添加人物") },
-                        leadingIcon = { Icon(Icons.Rounded.PersonAdd, contentDescription = null) },
-                        onClick = {
-                            addMenuExpanded = false
-                            onAddPerson()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("添加关系") },
-                        leadingIcon = { Icon(Icons.Rounded.Share, contentDescription = null) },
-                        onClick = {
-                            addMenuExpanded = false
-                            onAddRelationship()
-                        },
-                    )
+            if (selectedPersonId == null) {
+                Box {
+                    FloatingActionButton(onClick = { addMenuExpanded = true }) {
+                        Icon(Icons.Rounded.Add, contentDescription = "添加")
+                    }
+                    DropdownMenu(
+                        expanded = addMenuExpanded,
+                        onDismissRequest = { addMenuExpanded = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("添加人物") },
+                            leadingIcon = {
+                                Icon(Icons.Rounded.PersonAdd, contentDescription = null)
+                            },
+                            onClick = {
+                                addMenuExpanded = false
+                                onAddPerson()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("添加关系") },
+                            leadingIcon = { Icon(Icons.Rounded.Share, contentDescription = null) },
+                            onClick = {
+                                addMenuExpanded = false
+                                onAddRelationship()
+                            },
+                        )
+                    }
                 }
             }
         },
@@ -387,7 +391,16 @@ fun GraphScreen(
                                             style = MaterialTheme.typography.titleMedium,
                                         )
                                         Text(
-                                            text = "${state.relationshipsForPerson(selectedPerson.id).size} 条关系",
+                                            text = buildString {
+                                                append(
+                                                    "${state.relationshipsForPerson(selectedPerson.id).size} 条关系",
+                                                )
+                                                val candidateCount =
+                                                    state.inferenceCandidatesFor(selectedPerson.id).size
+                                                if (candidateCount > 0) {
+                                                    append(" · $candidateCount 个亲属候选")
+                                                }
+                                            },
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
@@ -395,7 +408,13 @@ fun GraphScreen(
                                     androidx.compose.material3.Button(
                                         onClick = { onPersonClick(selectedPerson.id) },
                                     ) {
-                                        Text("查看详情")
+                                        Text(
+                                            if (state.inferenceCandidatesFor(selectedPerson.id).isNotEmpty()) {
+                                                "查看候选"
+                                            } else {
+                                                "查看详情"
+                                            },
+                                        )
                                     }
                                 }
                                 Row(

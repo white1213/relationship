@@ -217,6 +217,34 @@ class GraphCanvasTest {
         )
     }
 
+    @Test
+    fun focusedSubsetCanLayoutWithoutTheConfiguredMyPerson() {
+        val people = listOf(
+            PersonEntity(id = "first", name = "甲"),
+            PersonEntity(id = "second", name = "乙"),
+        )
+        val parentType = RelationTypeEntity(
+            id = "preset_parent_child",
+            name = "父母",
+            inverseName = "子女",
+            category = RelationCategory.FAMILY,
+            direction = RelationDirection.DIRECTED,
+            isBuiltIn = true,
+        )
+
+        val layout = GraphLayoutEngine.layout(
+            people = people,
+            relationships = listOf(relationship("edge", "first", "second", parentType.id)),
+            relationTypes = listOf(parentType),
+            mode = GraphMode.FAMILY,
+            myPersonId = "missing-my-person",
+            pinnedPositions = emptyMap(),
+        )
+
+        assertEquals(setOf("first", "second"), layout.positions.keys)
+        assertTrue(layout.positions.values.all { it.x.isFinite() && it.y.isFinite() })
+    }
+
     private fun relationType(
         id: String,
         name: String,

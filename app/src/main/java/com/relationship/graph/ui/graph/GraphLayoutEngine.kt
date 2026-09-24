@@ -156,7 +156,11 @@ object GraphLayoutEngine {
         val generationByRoot = mutableMapOf<String, Int>()
         var conflicts = 0
         val queue = ArrayDeque<String>()
-        val startRoot = myPersonId?.let(sameGeneration::find)?.takeIf { it in roots } ?: roots.first()
+        val startRoot = myPersonId
+            ?.takeIf(sameGeneration::contains)
+            ?.let(sameGeneration::find)
+            ?.takeIf { it in roots }
+            ?: roots.first()
         generationByRoot[startRoot] = 0
         queue.add(startRoot)
         while (queue.isNotEmpty()) {
@@ -542,6 +546,8 @@ private class DisjointSet(values: List<String>) {
         parent[value] = root
         return root
     }
+
+    fun contains(value: String): Boolean = value in parent
 
     fun union(first: String, second: String) {
         val firstRoot = find(first)
