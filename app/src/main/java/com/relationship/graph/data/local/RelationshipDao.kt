@@ -90,6 +90,12 @@ interface RelationshipDao {
     @Upsert
     suspend fun upsertRelationType(type: RelationTypeEntity)
 
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertRelationType(type: RelationTypeEntity)
+
+    @Query("SELECT * FROM relation_types WHERE name = :name COLLATE NOCASE LIMIT 1")
+    suspend fun findRelationTypeByName(name: String): RelationTypeEntity?
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertRelationTypes(types: List<RelationTypeEntity>)
 

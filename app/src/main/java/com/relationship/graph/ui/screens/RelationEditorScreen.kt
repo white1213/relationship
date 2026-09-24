@@ -1,15 +1,19 @@
 package com.relationship.graph.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
@@ -32,6 +36,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -44,6 +49,7 @@ import com.relationship.graph.ui.AppUiState
 import com.relationship.graph.ui.RelationshipViewModel
 import com.relationship.graph.ui.components.AppTopBar
 import com.relationship.graph.ui.components.EmptyState
+import kotlinx.coroutines.launch
 
 @Composable
 fun RelationEditorScreen(
@@ -76,8 +82,9 @@ fun RelationEditorScreen(
     }
     var firstMenu by remember { mutableStateOf(false) }
     var secondMenu by remember { mutableStateOf(false) }
-    var typeMenu by remember { mutableStateOf(false) }
+    var typePickerVisible by remember { mutableStateOf(false) }
     var customTypeDialog by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     val firstPerson = state.person(firstPersonId)
     val secondPerson = state.person(secondPersonId)
@@ -153,48 +160,26 @@ fun RelationEditorScreen(
 
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("关系", style = MaterialTheme.typography.titleMedium)
-                androidx.compose.foundation.layout.Box {
-                    OutlinedButton(
-                        onClick = { typeMenu = true },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(
-                            text = relationType?.name ?: "选择关系类型",
-                            modifier = Modifier.weight(1f),
-                        )
-                        Icon(Icons.Rounded.ArrowDropDown, contentDescription = null)
-                    }
-                    DropdownMenu(
-                        expanded = typeMenu,
-                        onDismissRequest = { typeMenu = false },
-                    ) {
-                        selectableRelationTypes.forEach { type ->
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        if (type.direction == RelationDirection.DIRECTED) {
-                                            "${type.name} / ${type.inverseName.orEmpty()}"
-                                        } else {
-                                            type.name
-                                        },
-                                    )
-                                },
-                                onClick = {
-                                    relationTypeId = type.id
-                                    typeMenu = false
-                                },
-                            )
-                        }
-                        DropdownMenuItem(
-                            text = { Text("新增自定义关系") },
-                            leadingIcon = { Icon(Icons.Rounded.Add, contentDescription = null) },
-                            onClick = {
-                                typeMenu = false
-                                customTypeDialog = true
-                            },
-                        )
-                    }
+                OutlinedButton(
+                    onClick = { typePickerVisible = true },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        text = relationType?.name ?: "选择关系类型",
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = "${selectableRelationTypes.size} 种",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Icon(Icons.Rounded.ArrowDropDown, contentDescription = null)
                 }
+                Text(
+                    text = "关系类型较多时可搜索选择",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
 
             if (relationType?.direction == RelationDirection.DIRECTED &&
@@ -266,20 +251,118 @@ fun RelationEditorScreen(
         }
     }
 
+    if (typePickerVisible) {
+        RelationTypePickerDialog(
+            relationTypes = selectableRelationTypes,
+            onSelect = { type ->
+                relationTypeId = type.id
+                typePickerVisible = false
+            },
+            onAddCustom = {
+                typePickerVisible = false
+                customTypeDialog = true
+            },
+            onDismiss = { typePickerVisible = false },
+        )
+    }
+
     if (customTypeDialog) {
         CustomRelationTypeDialog(
             onDismiss = { customTypeDialog = false },
             onSave = { name, inverseName, direction ->
-                viewModel.createCustomRelationType(
-                    name = name,
-                    inverseName = inverseName,
-                    category = RelationCategory.CUSTOM,
-                    direction = direction,
-                )
-                customTypeDialog = false
+                scope.launch {
+                    val createdId = viewModel.createCustomRelationType(
+                        name = name,
+                        inverseName = inverseName,
+                        category = RelationCategory.CUSTOM,
+                        direction = direction,
+                    )
+                    if (createdId != null) {
+                        relationTypeId = createdId
+                        customTypeDialog = false
+                    }
+                }
             },
         )
     }
+}
+
+@Composable
+private fun RelationTypePickerDialog(
+    relationTypes: List<com.relationship.graph.data.local.RelationTypeEntity>,
+    onSelect: (com.relationship.graph.data.local.RelationTypeEntity) -> Unit,
+    onAddCustom: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var query by rememberSaveable { mutableStateOf("") }
+    val normalizedQuery = query.trim().lowercase()
+    val filteredTypes = if (normalizedQuery.isBlank()) {
+        relationTypes
+    } else {
+        relationTypes.filter {
+            it.name.lowercase().contains(normalizedQuery) ||
+                it.inverseName.orEmpty().lowercase().contains(normalizedQuery)
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("选择关系类型") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    label = { Text("搜索关系类型") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                TextButton(
+                    onClick = onAddCustom,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Rounded.Add, contentDescription = null)
+                    Text("新增自定义关系")
+                }
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 420.dp),
+                ) {
+                    items(filteredTypes, key = { it.id }) { type ->
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onSelect(type) }
+                                .padding(vertical = 10.dp),
+                        ) {
+                            Text(
+                                text = if (type.direction == RelationDirection.DIRECTED) {
+                                    "${type.name} / ${type.inverseName.orEmpty()}"
+                                } else {
+                                    type.name
+                                },
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                        }
+                    }
+                    if (filteredTypes.isEmpty()) {
+                        item {
+                            Text(
+                                text = "没有匹配的关系类型",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(vertical = 12.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
+    )
 }
 
 @Composable

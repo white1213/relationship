@@ -274,29 +274,31 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
-    fun createCustomRelationType(
+    suspend fun createCustomRelationType(
         name: String,
         inverseName: String?,
         category: RelationCategory,
         direction: RelationDirection,
-    ) {
+    ): String? {
         if (name.isBlank()) {
             sendMessage("请输入关系名称")
-            return
+            return null
         }
-        viewModelScope.launch {
-            val type = RelationTypeEntity(
-                id = UUID.randomUUID().toString(),
-                name = name.trim(),
-                inverseName = inverseName?.trim()?.takeIf(String::isNotEmpty),
-                category = category,
-                direction = direction,
-                isBuiltIn = false,
-            )
-            runCatching { repository.saveRelationType(type) }
-                .onSuccess { sendMessage("自定义关系已创建") }
-                .onFailure { sendMessage("关系名称已存在") }
-        }
+        val type = RelationTypeEntity(
+            id = UUID.randomUUID().toString(),
+            name = name.trim(),
+            inverseName = inverseName?.trim()?.takeIf(String::isNotEmpty),
+            category = category,
+            direction = direction,
+            isBuiltIn = false,
+        )
+        return repository.createCustomRelationType(type)
+            .onSuccess { sendMessage("自定义关系已创建") }
+            .onFailure {
+                sendMessage(it.message ?: "关系名称已存在")
+            }
+            .map { type.id }
+            .getOrNull()
     }
 
     fun confirmInference(

@@ -87,6 +87,13 @@ class RelationshipRepository(
         dao.upsertRelationType(type)
     }
 
+    suspend fun createCustomRelationType(type: RelationTypeEntity): Result<Unit> = runCatching {
+        require(dao.findRelationTypeByName(type.name) == null) {
+            "关系名称已存在"
+        }
+        dao.insertRelationType(type)
+    }
+
     suspend fun saveRelationship(relationship: RelationshipEntity) {
         dao.upsertRelationship(relationship.copy(updatedAt = System.currentTimeMillis()))
     }
