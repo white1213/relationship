@@ -214,6 +214,7 @@ private fun MainNavigation(
                     state = uiState,
                     app = LocalContext.current.applicationContext as RelationshipApplication,
                     onOpenBackup = { navController.navigate(Routes.Backup) },
+                    onSetMyPerson = viewModel::setMyPerson,
                     onLock = onLock,
                 )
             }

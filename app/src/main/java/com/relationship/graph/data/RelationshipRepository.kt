@@ -4,6 +4,8 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
 import com.relationship.graph.data.local.AppDatabase
+import com.relationship.graph.data.local.GraphMode
+import com.relationship.graph.data.local.GraphPositionEntity
 import com.relationship.graph.data.local.PersonEntity
 import com.relationship.graph.data.local.PersonTagEntity
 import com.relationship.graph.data.local.PresetRelationTypes
@@ -23,6 +25,7 @@ data class GraphData(
     val personTags: List<PersonTagEntity>,
     val relationTypes: List<RelationTypeEntity>,
     val relationships: List<RelationshipEntity>,
+    val graphPositions: List<GraphPositionEntity>,
 )
 
 class RelationshipRepository(
@@ -36,6 +39,7 @@ class RelationshipRepository(
     val personTags: Flow<List<PersonTagEntity>> = dao.observePersonTags()
     val relationTypes: Flow<List<RelationTypeEntity>> = dao.observeRelationTypes()
     val relationships: Flow<List<RelationshipEntity>> = dao.observeRelationships()
+    val graphPositions: Flow<List<GraphPositionEntity>> = dao.observeGraphPositions()
 
     suspend fun ensurePresetRelationTypes() {
         if (dao.relationTypeCount() == 0) {
@@ -89,10 +93,13 @@ class RelationshipRepository(
         dao.deleteRelationship(relationship)
     }
 
-    suspend fun updateGraphPositions(positions: Map<String, Pair<Float, Float>>) {
-        if (positions.isNotEmpty()) {
-            dao.updateGraphPositions(positions)
-        }
+    suspend fun saveGraphPosition(
+        personId: String,
+        mode: GraphMode,
+        x: Float,
+        y: Float,
+    ) {
+        dao.saveGraphPosition(personId, mode, x, y)
     }
 
     suspend fun getGraphData(): GraphData = GraphData(
@@ -101,6 +108,7 @@ class RelationshipRepository(
         personTags = dao.getAllPersonTags(),
         relationTypes = dao.getAllRelationTypes(),
         relationships = dao.getAllRelationships(),
+        graphPositions = dao.getAllGraphPositions(),
     )
 
     suspend fun replaceAll(data: GraphData) {
@@ -110,6 +118,7 @@ class RelationshipRepository(
             personTags = data.personTags,
             relationTypes = data.relationTypes,
             relationships = data.relationships,
+            graphPositions = data.graphPositions,
         )
         cleanupUnusedAvatars(data.people.mapNotNull { it.avatarPath }.toSet())
     }

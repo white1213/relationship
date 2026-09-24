@@ -8,6 +8,8 @@ import androidx.lifecycle.viewModelScope
 import com.relationship.graph.RelationshipApplication
 import com.relationship.graph.data.local.PersonEntity
 import com.relationship.graph.data.local.PersonTagEntity
+import com.relationship.graph.data.local.GraphMode
+import com.relationship.graph.data.local.GraphPositionEntity
 import com.relationship.graph.data.local.RelationCategory
 import com.relationship.graph.data.local.RelationDirection
 import com.relationship.graph.data.local.RelationTypeEntity
@@ -19,6 +21,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -30,6 +33,9 @@ data class AppUiState(
     val personTags: List<PersonTagEntity> = emptyList(),
     val relationTypes: List<RelationTypeEntity> = emptyList(),
     val relationships: List<RelationshipEntity> = emptyList(),
+    val graphPositions: List<GraphPositionEntity> = emptyList(),
+    val graphMode: GraphMode = GraphMode.FAMILY,
+    val myPersonId: String? = null,
     val searchQuery: String = "",
     val selectedCategory: RelationCategory? = null,
 ) {
@@ -60,6 +66,7 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
 
     private val searchQuery = MutableStateFlow("")
     private val selectedCategory = MutableStateFlow<RelationCategory?>(null)
+    private val graphMode = MutableStateFlow(GraphMode.FAMILY)
     private val messageChannel = Channel<String>(Channel.BUFFERED)
     val messages = messageChannel.receiveAsFlow()
 
@@ -69,6 +76,9 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
         repository.personTags,
         repository.relationTypes,
         repository.relationships,
+        repository.graphPositions,
+        graphMode,
+        app.container.graphPreferencesStore.myPersonId,
         searchQuery,
         selectedCategory,
     ) { values ->
@@ -80,8 +90,11 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
             personTags = values[2] as List<PersonTagEntity>,
             relationTypes = values[3] as List<RelationTypeEntity>,
             relationships = values[4] as List<RelationshipEntity>,
-            searchQuery = values[5] as String,
-            selectedCategory = values[6] as RelationCategory?,
+            graphPositions = values[5] as List<GraphPositionEntity>,
+            graphMode = values[6] as GraphMode,
+            myPersonId = values[7] as String?,
+            searchQuery = values[8] as String,
+            selectedCategory = values[9] as RelationCategory?,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppUiState())
 
@@ -89,6 +102,17 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
         viewModelScope.launch {
             runCatching { repository.ensurePresetRelationTypes() }
                 .onFailure { messageChannel.send(it.message ?: "关系类型初始化失败") }
+        }
+        viewModelScope.launch {
+            combine(
+                repository.people,
+                app.container.graphPreferencesStore.myPersonId,
+            ) { people, myPersonId -> people.map { it.id }.toSet() to myPersonId }
+                .collect { (personIds, myPersonId) ->
+                    if (myPersonId != null && myPersonId !in personIds) {
+                        app.container.graphPreferencesStore.clearMyPersonId()
+                    }
+                }
         }
     }
 
@@ -98,6 +122,17 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
 
     fun setCategory(value: RelationCategory?) {
         selectedCategory.value = value
+    }
+
+    fun setGraphMode(value: GraphMode) {
+        graphMode.value = value
+    }
+
+    fun setMyPerson(personId: String) {
+        viewModelScope.launch {
+            app.container.graphPreferencesStore.setMyPersonId(personId)
+            sendMessage("已设置我的信息")
+        }
     }
 
     fun savePerson(
@@ -126,9 +161,6 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
                     birthday = birthday.trim(),
                     address = address.trim(),
                     notes = notes.trim(),
-                    graphX = existing?.graphX ?: 0f,
-                    graphY = existing?.graphY ?: 0f,
-                    positionInitialized = existing?.positionInitialized ?: false,
                     createdAt = existing?.createdAt ?: now,
                     updatedAt = now,
                 ),
@@ -141,7 +173,12 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
     fun deletePerson(person: PersonEntity) {
         viewModelScope.launch {
             runCatching { repository.deletePerson(person) }
-                .onSuccess { sendMessage("人物已删除") }
+                .onSuccess {
+                    if (person.id == uiState.value.myPersonId) {
+                        app.container.graphPreferencesStore.clearMyPersonId()
+                    }
+                    sendMessage("人物已删除")
+                }
                 .onFailure { sendMessage(it.message ?: "删除失败") }
         }
     }
@@ -213,9 +250,9 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
     suspend fun importAvatarBitmap(personId: String, bitmap: Bitmap): String =
         repository.importAvatarBitmap(personId, bitmap)
 
-    fun saveGraphPositions(positions: Map<String, Pair<Float, Float>>) {
+    fun saveGraphPosition(personId: String, x: Float, y: Float) {
         viewModelScope.launch {
-            repository.updateGraphPositions(positions)
+            repository.saveGraphPosition(personId, graphMode.value, x, y)
         }
     }
 

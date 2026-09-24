@@ -14,10 +14,35 @@ data class PersonEntity(
     val birthday: String = "",
     val address: String = "",
     val notes: String = "",
-    val graphX: Float = 0f,
-    val graphY: Float = 0f,
-    val positionInitialized: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis(),
+)
+
+enum class GraphMode {
+    FAMILY,
+    SOCIAL,
+    ALL,
+}
+
+@Entity(
+    tableName = "graph_positions",
+    primaryKeys = ["personId", "mode"],
+    foreignKeys = [
+        ForeignKey(
+            entity = PersonEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["personId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("personId")],
+)
+data class GraphPositionEntity(
+    val personId: String,
+    val mode: GraphMode,
+    val x: Float,
+    val y: Float,
+    val isManuallyPinned: Boolean,
     val updatedAt: Long = System.currentTimeMillis(),
 )
 

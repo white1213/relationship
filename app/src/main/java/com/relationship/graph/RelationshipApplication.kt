@@ -5,6 +5,7 @@ import com.google.gson.Gson
 import com.relationship.graph.data.RelationshipRepository
 import com.relationship.graph.data.backup.BackupManager
 import com.relationship.graph.data.local.AppDatabase
+import com.relationship.graph.data.preferences.GraphPreferencesStore
 import com.relationship.graph.data.security.SecretStore
 import com.relationship.graph.data.security.SecurityStore
 import com.relationship.graph.security.AppLockController
@@ -29,6 +30,7 @@ class RelationshipApplication : Application() {
             ),
             backupManager = null,
             gson = Gson(),
+            graphPreferencesStore = GraphPreferencesStore(this),
         )
         container = container.copy(
             backupManager = BackupManager(
@@ -45,4 +47,5 @@ data class AppContainer(
     val repository: RelationshipRepository,
     val backupManager: BackupManager?,
     val gson: Gson,
+    val graphPreferencesStore: GraphPreferencesStore,
 )

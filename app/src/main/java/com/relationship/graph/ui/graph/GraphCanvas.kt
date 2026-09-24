@@ -13,30 +13,30 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
+import com.relationship.graph.data.local.GraphMode
+import com.relationship.graph.data.local.GraphPositionEntity
 import com.relationship.graph.data.local.PersonEntity
-import com.relationship.graph.data.local.RelationDirection
 import com.relationship.graph.data.local.RelationTypeEntity
 import com.relationship.graph.data.local.RelationshipEntity
-import kotlin.math.PI
-import kotlin.math.abs
-import kotlin.math.cos
-import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.sin
 
 data class GraphEdgeGroup(
     val key: String,
@@ -46,69 +46,102 @@ data class GraphEdgeGroup(
     val relationTypes: List<RelationTypeEntity>,
 )
 
+private data class Viewport(
+    val pan: Offset = Offset.Zero,
+    val zoom: Float = 0.8f,
+)
+
 @Composable
 fun GraphCanvas(
     people: List<PersonEntity>,
     edgeGroups: List<GraphEdgeGroup>,
+    mode: GraphMode,
+    myPersonId: String?,
+    graphPositions: List<GraphPositionEntity>,
     highlightedPersonIds: Set<String>?,
     highlightedEdgeKeys: Set<String>?,
     onPersonClick: (String) -> Unit,
     onEdgeAction: (GraphEdgeGroup) -> Unit,
-    onPositionsCommitted: (Map<String, Pair<Float, Float>>) -> Unit,
+    onPersonMoved: (personId: String, x: Float, y: Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val positions = remember { mutableStateMapOf<String, Offset>() }
-    val viewportPan = remember { mutableStateOf(Offset.Zero) }
-    var viewportZoom by remember { mutableFloatStateOf(0.75f) }
+    val relationships = remember(edgeGroups) { edgeGroups.flatMap { it.relationships } }
+    val relationTypes = remember(edgeGroups) {
+        edgeGroups.flatMap { it.relationTypes }.distinctBy { it.id }
+    }
+    val pinnedPositions = remember(graphPositions, mode) {
+        graphPositions
+            .filter { it.mode == mode && it.isManuallyPinned }
+            .associate { it.personId to LayoutPoint(it.x, it.y) }
+    }
+    val layout = remember(
+        people,
+        relationships,
+        relationTypes,
+        mode,
+        myPersonId,
+        pinnedPositions,
+    ) {
+        GraphLayoutEngine.layout(
+            people = people,
+            relationships = relationships,
+            relationTypes = relationTypes,
+            mode = mode,
+            myPersonId = myPersonId,
+            pinnedPositions = pinnedPositions,
+        )
+    }
+
+    val nodePositions = remember { mutableStateMapOf<String, Offset>() }
+    val relationshipToGroup = remember(edgeGroups) {
+        edgeGroups.flatMap { group -> group.relationships.map { it.id to group } }.toMap()
+    }
+    val viewportsByMode = remember { mutableStateMapOf<GraphMode, Viewport>() }
+    var viewport by remember { mutableStateOf(Viewport()) }
+    var canvasSize by remember { mutableStateOf(IntSize.Zero) }
     var draggedNodeId by remember { mutableStateOf<String?>(null) }
     val textMeasurer = rememberTextMeasurer()
 
-    LaunchedEffect(people.map { it.id }, edgeGroups.map { it.key }) {
-        val missing = people.filter { it.id !in positions }
-        if (positions.isEmpty() || missing.isNotEmpty()) {
-            val initial = if (positions.isEmpty() && people.any { it.positionInitialized }) {
-                people.associate { it.id to Offset(it.graphX, it.graphY) }
-            } else {
-                positions.toMap()
+    LaunchedEffect(layout, mode, canvasSize) {
+        nodePositions.clear()
+        layout.positions.forEach { (personId, point) ->
+            nodePositions[personId] = Offset(point.x, point.y)
+        }
+        if (canvasSize.width > 0 && canvasSize.height > 0) {
+            viewport = viewportsByMode[mode] ?: fitViewport(layout.positions, canvasSize).also {
+                viewportsByMode[mode] = it
             }
-            val layout = computeGraphLayout(
-                people = people,
-                edgeGroups = edgeGroups,
-                existing = initial,
-            )
-            positions.putAll(layout)
-            onPositionsCommitted(
-                layout.mapValues { (_, point) -> point.x to point.y },
-            )
         }
     }
 
     Canvas(
         modifier = modifier
             .fillMaxSize()
-            .pointerInput(people.map { it.id }, edgeGroups.map { it.key }) {
+            .onSizeChanged { canvasSize = it }
+            .pointerInput(people.map { it.id }, edgeGroups.map { it.key }, mode) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     val startTime = down.uptimeMillis
                     var activeNodeId = hitTestNode(
                         click = down.position,
-                        positions = positions,
-                        viewportPan = viewportPan.value,
-                        zoom = viewportZoom,
+                        positions = nodePositions,
+                        viewport = viewport,
                         canvasSize = size,
                     )
-                    val activeEdge = if (activeNodeId == null) {
-                        hitTestEdge(
+                    val activeRoute = if (activeNodeId == null) {
+                        hitTestRoute(
                             click = down.position,
-                            edgeGroups = edgeGroups,
-                            positions = positions,
-                            viewportPan = viewportPan.value,
-                            zoom = viewportZoom,
+                            routes = layout.routes,
+                            viewport = viewport,
                             canvasSize = size,
                         )
                     } else {
                         null
                     }
+                    val activeEdgeGroup = activeRoute
+                        ?.relationshipIds
+                        ?.firstOrNull()
+                        ?.let(relationshipToGroup::get)
                     var moved = false
                     var longPressHandled = false
                     var lastCentroid = down.position
@@ -127,15 +160,16 @@ fun GraphCanvas(
                             val second = pressed[1].position
                             val centroid = (first + second) / 2f
                             val distance = (first - second).getDistance()
-                            val oldZoom = viewportZoom
                             if (lastDistance > 0f && distance > 0f) {
-                                val newZoom = (oldZoom * distance / lastDistance).coerceIn(0.25f, 3f)
+                                val oldZoom = viewport.zoom
+                                val newZoom = (oldZoom * distance / lastDistance).coerceIn(0.2f, 3f)
                                 val center = Offset(size.width / 2f, size.height / 2f)
-                                val relative = centroid - center - viewportPan.value
-                                viewportPan.value = centroid - center - relative * (newZoom / oldZoom)
-                                viewportZoom = newZoom
+                                val relative = centroid - center - viewport.pan
+                                val newPan = centroid - center - relative * (newZoom / oldZoom)
+                                viewport = viewport.copy(pan = newPan, zoom = newZoom)
                             }
-                            viewportPan.value += centroid - lastCentroid
+                            viewport = viewport.copy(pan = viewport.pan + centroid - lastCentroid)
+                            viewportsByMode[mode] = viewport
                             lastCentroid = centroid
                             lastDistance = distance
                             pressed.forEach { it.consume() }
@@ -145,20 +179,21 @@ fun GraphCanvas(
                             if (delta.getDistance() > 0.5f) moved = true
 
                             if (activeNodeId != null) {
-                                val current = positions[activeNodeId] ?: Offset.Zero
-                                positions[activeNodeId!!] = current + delta / viewportZoom
+                                val current = nodePositions[activeNodeId] ?: Offset.Zero
+                                nodePositions[activeNodeId!!] = current + delta / viewport.zoom
                                 draggedNodeId = activeNodeId
                             } else {
-                                viewportPan.value += delta
+                                viewport = viewport.copy(pan = viewport.pan + delta)
+                                viewportsByMode[mode] = viewport
                             }
 
-                            if (activeEdge != null &&
+                            if (activeEdgeGroup != null &&
                                 !moved &&
                                 !longPressHandled &&
                                 change.uptimeMillis - startTime >= 500L
                             ) {
                                 longPressHandled = true
-                                onEdgeAction(activeEdge)
+                                onEdgeAction(activeEdgeGroup)
                             }
                             change.consume()
                         }
@@ -167,90 +202,102 @@ fun GraphCanvas(
                     if (!moved && !longPressHandled) {
                         when {
                             activeNodeId != null -> onPersonClick(activeNodeId!!)
-                            activeEdge != null -> onEdgeAction(activeEdge)
+                            activeEdgeGroup != null -> onEdgeAction(activeEdgeGroup)
                         }
                     }
-                    draggedNodeId?.let { id ->
-                        positions[id]?.let { point ->
-                            onPositionsCommitted(mapOf(id to (point.x to point.y)))
+                    draggedNodeId?.let { personId ->
+                        nodePositions[personId]?.let { point ->
+                            onPersonMoved(personId, point.x, point.y)
                         }
                     }
                     draggedNodeId = null
                 }
             },
     ) {
-        val panelColor = Color(0xFFD6E2F0)
         val primary = Color(0xFF3F7FDD)
+        val spouse = Color(0xFFD35F78)
+        val sibling = Color(0xFF5A8FD6)
+        val social = Color(0xFF7A8796)
         val muted = Color(0xFFB7C6D9)
         val labelText = Color(0xFF52647B)
         val center = Offset(size.width / 2f, size.height / 2f)
 
         withTransform({
-            translate(center.x + viewportPan.value.x, center.y + viewportPan.value.y)
-            scale(viewportZoom, viewportZoom, pivot = Offset.Zero)
+            translate(center.x + viewport.pan.x, center.y + viewport.pan.y)
+            scale(viewport.zoom, viewport.zoom, pivot = Offset.Zero)
         }) {
-            edgeGroups.forEach { group ->
-                val start = positions[group.firstPersonId] ?: return@forEach
-                val end = positions[group.secondPersonId] ?: return@forEach
-                val isHighlighted = highlightedEdgeKeys == null || group.key in highlightedEdgeKeys
-                val edgeColor = if (isHighlighted) primary.copy(alpha = 0.72f) else muted.copy(alpha = 0.22f)
-                drawLine(
-                    color = edgeColor,
-                    start = start,
-                    end = end,
-                    strokeWidth = if (isHighlighted) 3.2f else 2f,
-                )
-
-                val hasDirected = group.relationTypes.any {
-                    it.direction == RelationDirection.DIRECTED
-                }
-                if (hasDirected) {
-                    drawArrowHead(start = start, end = end, color = edgeColor)
+            layout.routes.forEach { route ->
+                val isHighlighted = highlightedEdgeKeys == null ||
+                    route.relationshipIds.any { relationshipToGroup[it]?.key in highlightedEdgeKeys }
+                val routeColor = when (route.style) {
+                    GraphRouteStyle.PARENT_CHILD -> primary
+                    GraphRouteStyle.SPOUSE -> spouse
+                    GraphRouteStyle.SIBLING -> sibling
+                    GraphRouteStyle.SOCIAL -> social
+                }.copy(alpha = if (isHighlighted) 0.78f else 0.22f)
+                val strokeWidth = if (isHighlighted) 2.8f else 1.7f
+                val pathEffect = when (route.style) {
+                    GraphRouteStyle.SIBLING,
+                    GraphRouteStyle.SOCIAL,
+                    -> PathEffect.dashPathEffect(floatArrayOf(8f, 6f))
+                    else -> null
                 }
 
-                val label = group.relationTypes.map { it.name }.distinct().joinToString("/")
-                if (label.isNotBlank() && isHighlighted) {
-                    val measured = textMeasurer.measure(
-                        AnnotatedString(label),
-                        style = TextStyle(
+                route.segments.forEachIndexed { index, segment ->
+                    val start = segment.start.toOffset()
+                    val end = segment.end.toOffset()
+                    if (route.style == GraphRouteStyle.SPOUSE) {
+                        val direction = end - start
+                        val distance = max(1f, direction.getDistance())
+                        val perpendicular = Offset(-direction.y / distance, direction.x / distance) * 2.5f
+                        drawLine(routeColor, start + perpendicular, end + perpendicular, strokeWidth)
+                        drawLine(routeColor, start - perpendicular, end - perpendicular, strokeWidth)
+                    } else {
+                        drawLine(
+                            color = routeColor,
+                            start = start,
+                            end = end,
+                            strokeWidth = strokeWidth,
+                            pathEffect = pathEffect,
+                        )
+                    }
+                    if (route.style == GraphRouteStyle.PARENT_CHILD && index == route.segments.lastIndex) {
+                        drawArrowHead(start = start, end = end, color = routeColor)
+                    }
+                }
+
+                if (isHighlighted && viewport.zoom >= LABEL_REVEAL_ZOOM && route.relationshipIds.isNotEmpty()) {
+                    val label = route.relationshipIds
+                        .mapNotNull { relationshipToGroup[it] }
+                        .flatMap { it.relationTypes }
+                        .distinctBy { it.id }
+                        .joinToString("/") { it.name }
+                    if (label.isNotBlank()) {
+                        drawRouteLabel(
+                            text = label,
+                            point = route.labelPoint.toOffset(),
                             color = labelText,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium,
-                        ),
-                    )
-                    val midpoint = (start + end) / 2f
-                    val paddingX = 7f
-                    val paddingY = 4f
-                    val topLeft = Offset(
-                        midpoint.x - measured.size.width / 2f - paddingX,
-                        midpoint.y - measured.size.height / 2f - paddingY,
-                    )
-                    drawRoundRect(
-                        color = Color.White.copy(alpha = 0.94f),
-                        topLeft = topLeft,
-                        size = Size(
-                            measured.size.width + paddingX * 2,
-                            measured.size.height + paddingY * 2,
-                        ),
-                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(10f, 10f),
-                    )
-                    drawText(measured, topLeft = topLeft + Offset(paddingX, paddingY))
+                            textMeasurer = textMeasurer,
+                        )
+                    }
                 }
             }
 
             people.forEach { person ->
-                val position = positions[person.id] ?: return@forEach
+                val position = nodePositions[person.id] ?: return@forEach
                 val isHighlighted = highlightedPersonIds == null || person.id in highlightedPersonIds
                 val isDragged = draggedNodeId == person.id
+                val isMyPerson = person.id == myPersonId
                 val radius = if (isDragged) 31f else 28f
                 val fill = when {
                     !isHighlighted -> muted.copy(alpha = 0.32f)
                     isDragged -> Color(0xFF275EAD)
+                    isMyPerson -> Color(0xFF244D86)
                     else -> primary
                 }
-                if (isDragged) {
+                if (isDragged || isMyPerson) {
                     drawCircle(
-                        color = primary.copy(alpha = 0.16f),
+                        color = primary.copy(alpha = if (isMyPerson) 0.2f else 0.16f),
                         radius = radius + 8f,
                         center = position,
                     )
@@ -258,10 +305,10 @@ fun GraphCanvas(
                 drawCircle(color = Color.White, radius = radius + 2.5f, center = position)
                 drawCircle(color = fill, radius = radius, center = position)
                 drawCircle(
-                    color = Color.White.copy(alpha = if (isHighlighted) 0.18f else 0.06f),
+                    color = Color.White.copy(alpha = if (isHighlighted) 0.24f else 0.06f),
                     radius = radius,
                     center = position,
-                    style = Stroke(width = 1.2f),
+                    style = Stroke(width = if (isMyPerson) 2.6f else 1.2f),
                 )
 
                 val initial = person.name.trim().take(1).ifBlank { "?" }
@@ -285,6 +332,27 @@ fun GraphCanvas(
     }
 }
 
+private fun LayoutPoint.toOffset(): Offset = Offset(x, y)
+
+private fun fitViewport(
+    positions: Map<String, LayoutPoint>,
+    canvasSize: IntSize,
+): Viewport {
+    if (positions.isEmpty()) return Viewport()
+    val minimumX = positions.values.minOf { it.x }
+    val maximumX = positions.values.maxOf { it.x }
+    val minimumY = positions.values.minOf { it.y }
+    val maximumY = positions.values.maxOf { it.y }
+    val width = max(260f, maximumX - minimumX + 180f)
+    val height = max(260f, maximumY - minimumY + 180f)
+    val zoom = min(canvasSize.width / width, canvasSize.height / height).coerceIn(0.2f, 1.15f)
+    val worldCenter = LayoutPoint((minimumX + maximumX) / 2f, (minimumY + maximumY) / 2f)
+    return Viewport(
+        pan = Offset(-worldCenter.x * zoom, -worldCenter.y * zoom),
+        zoom = zoom,
+    )
+}
+
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawArrowHead(
     start: Offset,
     end: Offset,
@@ -301,38 +369,68 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawArrowHead(
     drawLine(color, base - perpendicular * 6f, tip, strokeWidth = 3f)
 }
 
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawRouteLabel(
+    text: String,
+    point: Offset,
+    color: Color,
+    textMeasurer: TextMeasurer,
+) {
+    val measured = textMeasurer.measure(
+        AnnotatedString(text),
+        style = TextStyle(
+            color = color,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+        ),
+    )
+    val paddingX = 7f
+    val paddingY = 4f
+    val topLeft = Offset(
+        point.x - measured.size.width / 2f - paddingX,
+        point.y - measured.size.height / 2f - paddingY,
+    )
+    drawRoundRect(
+        color = Color.White.copy(alpha = 0.94f),
+        topLeft = topLeft,
+        size = Size(
+            measured.size.width + paddingX * 2,
+            measured.size.height + paddingY * 2,
+        ),
+        cornerRadius = CornerRadius(10f, 10f),
+    )
+    drawText(measured, topLeft = topLeft + Offset(paddingX, paddingY))
+}
+
 private fun hitTestNode(
     click: Offset,
     positions: Map<String, Offset>,
-    viewportPan: Offset,
-    zoom: Float,
+    viewport: Viewport,
     canvasSize: IntSize,
 ): String? {
     val center = Offset(canvasSize.width / 2f, canvasSize.height / 2f)
-    val world = (click - center - viewportPan) / zoom
+    val world = (click - center - viewport.pan) / viewport.zoom
     return positions.minByOrNull { (_, point) -> (point - world).getDistance() }
         ?.takeIf { (_, point) -> (point - world).getDistance() <= 36f }
         ?.key
 }
 
-private fun hitTestEdge(
+private fun hitTestRoute(
     click: Offset,
-    edgeGroups: List<GraphEdgeGroup>,
-    positions: Map<String, Offset>,
-    viewportPan: Offset,
-    zoom: Float,
+    routes: List<RoutedRelationship>,
+    viewport: Viewport,
     canvasSize: IntSize,
-): GraphEdgeGroup? {
+): RoutedRelationship? {
     val center = Offset(canvasSize.width / 2f, canvasSize.height / 2f)
-    val world = (click - center - viewportPan) / zoom
-    return edgeGroups.minByOrNull { group ->
-        val start = positions[group.firstPersonId] ?: return@minByOrNull Float.MAX_VALUE
-        val end = positions[group.secondPersonId] ?: return@minByOrNull Float.MAX_VALUE
-        distanceToSegment(world, start, end)
-    }?.takeIf { group ->
-        val start = positions[group.firstPersonId] ?: return@takeIf false
-        val end = positions[group.secondPersonId] ?: return@takeIf false
-        distanceToSegment(world, start, end) <= max(14f, 20f / zoom)
+    val world = (click - center - viewport.pan) / viewport.zoom
+    return routes.minByOrNull { route ->
+        route.segments.minOfOrNull {
+            distanceToSegment(world, it.start.toOffset(), it.end.toOffset())
+        } ?: Float.MAX_VALUE
+    }?.takeIf { route ->
+        val distance = route.segments.minOfOrNull {
+            distanceToSegment(world, it.start.toOffset(), it.end.toOffset())
+        } ?: Float.MAX_VALUE
+        distance <= max(14f, 20f / viewport.zoom)
     }
 }
 
@@ -346,96 +444,6 @@ private fun distanceToSegment(point: Offset, start: Offset, end: Offset): Float 
     val clamped = projection.coerceIn(0f, 1f)
     val nearest = start + segment * clamped
     return (point - nearest).getDistance()
-}
-
-internal fun computeGraphLayout(
-    people: List<PersonEntity>,
-    edgeGroups: List<GraphEdgeGroup>,
-    existing: Map<String, Offset>,
-): Map<String, Offset> {
-    if (people.isEmpty()) return emptyMap()
-
-    val hasSavedLayout = people.count(PersonEntity::positionInitialized) >= max(1, people.size / 2)
-    val result = existing.toMutableMap()
-    if (!hasSavedLayout) {
-        val radius = min(420f, max(150f, people.size * 11f))
-        people.forEachIndexed { index, person ->
-            val angle = (2.0 * PI * index / people.size).toFloat()
-            result[person.id] = Offset(cos(angle) * radius, sin(angle) * radius)
-        }
-        simulateForces(people, edgeGroups, result)
-    } else {
-        people.filter { it.id !in result }.forEachIndexed { index, person ->
-            val related = edgeGroups.firstOrNull {
-                it.firstPersonId == person.id || it.secondPersonId == person.id
-            }
-            val neighborId = when (related?.firstPersonId) {
-                person.id -> related?.secondPersonId
-                else -> related?.firstPersonId
-            }
-            val neighbor = neighborId?.let(result::get)
-            val angle = index * 1.7f
-            result[person.id] = neighbor?.plus(Offset(cos(angle) * 130f, sin(angle) * 130f))
-                ?: Offset(cos(angle) * 260f, sin(angle) * 260f)
-        }
-    }
-    return result
-}
-
-private fun simulateForces(
-    people: List<PersonEntity>,
-    edgeGroups: List<GraphEdgeGroup>,
-    positions: MutableMap<String, Offset>,
-) {
-    val count = people.size
-    if (count <= 1) {
-        people.firstOrNull()?.let { positions[it.id] = Offset.Zero }
-        return
-    }
-    val area = 900f * 900f
-    val idealDistance = kotlin.math.sqrt(area / count)
-    val displacement = people.associate { it.id to Offset.Zero }.toMutableMap()
-
-    repeat(140) { iteration ->
-        people.forEach { person ->
-            var force = Offset.Zero
-            val point = positions[person.id] ?: Offset.Zero
-            people.forEach { other ->
-                if (other.id == person.id) return@forEach
-                val otherPoint = positions[other.id] ?: Offset.Zero
-                val delta = point - otherPoint
-                val distance = max(1f, delta.getDistance())
-                force += delta / distance * (idealDistance * idealDistance / distance)
-            }
-            edgeGroups.forEach { edge ->
-                val otherId = when (person.id) {
-                    edge.firstPersonId -> edge.secondPersonId
-                    edge.secondPersonId -> edge.firstPersonId
-                    else -> null
-                }
-                if (otherId != null) {
-                    val otherPoint = positions[otherId] ?: Offset.Zero
-                    val delta = point - otherPoint
-                    val distance = max(1f, delta.getDistance())
-                    force -= delta / distance * (distance * distance / idealDistance)
-                }
-            }
-            displacement[person.id] = force
-        }
-
-        val temperature = idealDistance * (1f - iteration / 140f) * 0.08f
-        people.forEach { person ->
-            val point = positions[person.id] ?: Offset.Zero
-            val force = displacement[person.id] ?: Offset.Zero
-            val length = max(1f, force.getDistance())
-            val step = force / length * min(length, temperature)
-            val next = point + step
-            positions[person.id] = Offset(
-                next.x.coerceIn(-650f, 650f),
-                next.y.coerceIn(-650f, 650f),
-            )
-        }
-    }
 }
 
 fun buildEdgeGroups(
@@ -459,3 +467,5 @@ fun buildEdgeGroups(
             )
         }
 }
+
+private const val LABEL_REVEAL_ZOOM = 1.15f

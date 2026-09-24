@@ -26,6 +26,9 @@ interface RelationshipDao {
     @Query("SELECT * FROM person_tags")
     fun observePersonTags(): Flow<List<PersonTagEntity>>
 
+    @Query("SELECT * FROM graph_positions")
+    fun observeGraphPositions(): Flow<List<GraphPositionEntity>>
+
     @Query("SELECT * FROM people")
     suspend fun getAllPeople(): List<PersonEntity>
 
@@ -40,6 +43,9 @@ interface RelationshipDao {
 
     @Query("SELECT * FROM person_tags")
     suspend fun getAllPersonTags(): List<PersonTagEntity>
+
+    @Query("SELECT * FROM graph_positions")
+    suspend fun getAllGraphPositions(): List<GraphPositionEntity>
 
     @Query("SELECT COUNT(*) FROM relation_types")
     suspend fun relationTypeCount(): Int
@@ -61,17 +67,6 @@ interface RelationshipDao {
 
     @Update
     suspend fun updatePerson(person: PersonEntity)
-
-    @Query(
-        "UPDATE people SET graphX = :x, graphY = :y, positionInitialized = 1, updatedAt = :updatedAt " +
-            "WHERE id = :personId",
-    )
-    suspend fun updateGraphPosition(
-        personId: String,
-        x: Float,
-        y: Float,
-        updatedAt: Long,
-    )
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertTag(tag: TagEntity)
@@ -97,6 +92,12 @@ interface RelationshipDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertRelationship(relationship: RelationshipEntity)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertGraphPosition(position: GraphPositionEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertGraphPositions(positions: List<GraphPositionEntity>)
+
     @Delete
     suspend fun deleteRelationship(relationship: RelationshipEntity)
 
@@ -118,6 +119,9 @@ interface RelationshipDao {
     @Query("DELETE FROM relation_types")
     suspend fun deleteAllRelationTypes()
 
+    @Query("DELETE FROM graph_positions")
+    suspend fun deleteAllGraphPositions()
+
     @Transaction
     suspend fun savePersonWithTags(
         person: PersonEntity,
@@ -131,11 +135,23 @@ interface RelationshipDao {
     }
 
     @Transaction
-    suspend fun updateGraphPositions(positions: Map<String, Pair<Float, Float>>) {
+    suspend fun saveGraphPosition(
+        personId: String,
+        mode: GraphMode,
+        x: Float,
+        y: Float,
+    ) {
         val now = System.currentTimeMillis()
-        positions.forEach { (personId, point) ->
-            updateGraphPosition(personId, point.first, point.second, now)
-        }
+        upsertGraphPosition(
+            GraphPositionEntity(
+                personId = personId,
+                mode = mode,
+                x = x,
+                y = y,
+                isManuallyPinned = true,
+                updatedAt = now,
+            ),
+        )
     }
 
     @Transaction
@@ -145,14 +161,17 @@ interface RelationshipDao {
         personTags: List<PersonTagEntity>,
         relationTypes: List<RelationTypeEntity>,
         relationships: List<RelationshipEntity>,
+        graphPositions: List<GraphPositionEntity>,
     ) {
         deleteAllRelationships()
         deleteAllPersonTags()
         deleteAllPeople()
         deleteAllTags()
         deleteAllRelationTypes()
+        deleteAllGraphPositions()
 
         upsertPeople(people)
+        upsertGraphPositions(graphPositions)
         insertTags(tags)
         insertPersonTags(personTags)
         insertRelationTypes(relationTypes)

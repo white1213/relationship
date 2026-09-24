@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Backup
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
@@ -23,6 +24,9 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -31,6 +35,7 @@ import com.relationship.graph.BuildConfig
 import com.relationship.graph.RelationshipApplication
 import com.relationship.graph.ui.AppUiState
 import com.relationship.graph.ui.components.AppTopBar
+import com.relationship.graph.ui.components.MyPersonPickerDialog
 import com.relationship.graph.ui.security.rememberBiometricPromptLauncher
 
 @Composable
@@ -38,9 +43,11 @@ fun SettingsScreen(
     state: AppUiState,
     app: RelationshipApplication,
     onOpenBackup: () -> Unit,
+    onSetMyPerson: (String) -> Unit,
     onLock: () -> Unit,
 ) {
     val lockState by app.appLockController.state.collectAsStateWithLifecycle()
+    var showMyPersonDialog by remember { mutableStateOf(false) }
     val enableBiometric = rememberBiometricPromptLauncher(
         title = "启用生物识别",
         onSuccess = { app.appLockController.setBiometricEnabled(true) },
@@ -115,6 +122,39 @@ fun SettingsScreen(
                 }
             }
 
+            Text("我的设置", style = MaterialTheme.typography.titleMedium)
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = state.people.isNotEmpty()) {
+                        showMyPersonDialog = true
+                    },
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Rounded.Person, contentDescription = null)
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(start = 14.dp),
+                    ) {
+                        Text("我的信息")
+                        Text(
+                            text = state.myPersonId
+                                ?.let { personId -> state.person(personId)?.name }
+                                ?: if (state.people.isEmpty()) "请先添加人物" else "尚未设置",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Icon(Icons.Rounded.ChevronRight, contentDescription = null)
+                }
+            }
+
             Text("数据", style = MaterialTheme.typography.titleMedium)
             Card(
                 modifier = Modifier
@@ -161,5 +201,17 @@ fun SettingsScreen(
                 }
             }
         }
+    }
+
+    if (showMyPersonDialog) {
+        MyPersonPickerDialog(
+            people = state.people,
+            selectedPersonId = state.myPersonId,
+            onSelect = { personId ->
+                onSetMyPerson(personId)
+                showMyPersonDialog = false
+            },
+            onDismiss = { showMyPersonDialog = false },
+        )
     }
 }
