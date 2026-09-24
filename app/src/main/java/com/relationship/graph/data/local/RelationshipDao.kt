@@ -66,6 +66,13 @@ interface RelationshipDao {
     @Query("SELECT * FROM relationships WHERE id = :relationshipId LIMIT 1")
     suspend fun getRelationship(relationshipId: String): RelationshipEntity?
 
+    @Query(
+        "SELECT tags.name FROM tags " +
+            "INNER JOIN person_tags ON tags.id = person_tags.tagId " +
+            "WHERE person_tags.personId = :personId ORDER BY tags.name",
+    )
+    suspend fun getTagNamesForPerson(personId: String): List<String>
+
     @Upsert
     suspend fun upsertPerson(person: PersonEntity)
 

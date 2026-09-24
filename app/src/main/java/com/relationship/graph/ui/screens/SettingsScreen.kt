@@ -11,6 +11,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Backup
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Person
@@ -43,6 +44,7 @@ fun SettingsScreen(
     state: AppUiState,
     app: RelationshipApplication,
     onOpenBackup: () -> Unit,
+    onOpenAiSettings: () -> Unit,
     onSetMyPerson: (String) -> Unit,
     onLock: () -> Unit,
 ) {
@@ -184,6 +186,35 @@ fun SettingsScreen(
                 }
             }
 
+            Text("AI", style = MaterialTheme.typography.titleMedium)
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onOpenAiSettings),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Rounded.AutoAwesome, contentDescription = null)
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(start = 14.dp),
+                    ) {
+                        Text("AI 设置")
+                        Text(
+                            text = "配置兼容 OpenAI 的 API 服务",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Icon(Icons.Rounded.ChevronRight, contentDescription = null)
+                }
+            }
+
             Text("关于", style = MaterialTheme.typography.titleMedium)
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -194,7 +225,7 @@ fun SettingsScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
-                        text = "数据仅保存在本机，不包含联网功能。",
+                        text = "关系数据默认保存在本机；启用 AI 后会按设置发送关系摘要。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

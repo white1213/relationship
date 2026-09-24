@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AutoFixHigh
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.rounded.Search
@@ -38,6 +39,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -83,6 +85,9 @@ fun GraphScreen(
     onAddPerson: () -> Unit,
     onAddRelationship: () -> Unit,
     onEditRelationship: (String, String) -> Unit,
+    onOpenFullscreen: () -> Unit = {},
+    fullscreenMode: Boolean = false,
+    onExitFullscreen: () -> Unit = {},
 ) {
     var searchVisible by remember { mutableStateOf(false) }
     var addMenuExpanded by remember { mutableStateOf(false) }
@@ -97,7 +102,7 @@ fun GraphScreen(
     var branchDialogPersonId by rememberSaveable { mutableStateOf<String?>(null) }
     var inferenceCandidateDialog by remember { mutableStateOf<InferredRelationshipCandidate?>(null) }
     var showLegend by rememberSaveable { mutableStateOf(false) }
-    var organizeRequestId by rememberSaveable { mutableStateOf(0) }
+    var organizeRequestId by rememberSaveable { mutableIntStateOf(0) }
     var organizeUndo by remember { mutableStateOf<List<GraphPositionEntity>?>(null) }
     var showOrganizeUndo by remember { mutableStateOf(false) }
 
@@ -208,39 +213,44 @@ fun GraphScreen(
 
     Scaffold(
         topBar = {
-            AppTopBar(
-                title = "关系图谱",
-                actions = {
-                    IconButton(
-                        onClick = {
-                            organizeUndo = state.graphPositions.filter {
-                                it.mode == state.graphMode
-                            }
-                            organizeRequestId++
-                            selectedPersonId = null
-                            focusPersonId = null
-                            focusScope = null
-                            centerOnPersonId = null
-                            viewModel.clearGraphPositions(state.graphMode)
-                            showOrganizeUndo = true
-                        },
-                    ) {
-                        Icon(Icons.Rounded.AutoFixHigh, contentDescription = "一键整理")
-                    }
-                    IconButton(onClick = { showLegend = true }) {
-                        Icon(Icons.Rounded.Info, contentDescription = "图例")
-                    }
-                    IconButton(onClick = { searchVisible = !searchVisible }) {
-                        Icon(
-                            imageVector = if (searchVisible) Icons.Rounded.Close else Icons.Rounded.Search,
-                            contentDescription = if (searchVisible) "关闭搜索" else "搜索",
-                        )
-                    }
-                },
-            )
+            if (!fullscreenMode) {
+                AppTopBar(
+                    title = "关系图谱",
+                    actions = {
+                        IconButton(onClick = onOpenFullscreen) {
+                            Icon(Icons.Rounded.Fullscreen, contentDescription = "横屏全屏")
+                        }
+                        IconButton(
+                            onClick = {
+                                organizeUndo = state.graphPositions.filter {
+                                    it.mode == state.graphMode
+                                }
+                                organizeRequestId++
+                                selectedPersonId = null
+                                focusPersonId = null
+                                focusScope = null
+                                centerOnPersonId = null
+                                viewModel.clearGraphPositions(state.graphMode)
+                                showOrganizeUndo = true
+                            },
+                        ) {
+                            Icon(Icons.Rounded.AutoFixHigh, contentDescription = "一键整理")
+                        }
+                        IconButton(onClick = { showLegend = true }) {
+                            Icon(Icons.Rounded.Info, contentDescription = "图例")
+                        }
+                        IconButton(onClick = { searchVisible = !searchVisible }) {
+                            Icon(
+                                imageVector = if (searchVisible) Icons.Rounded.Close else Icons.Rounded.Search,
+                                contentDescription = if (searchVisible) "关闭搜索" else "搜索",
+                            )
+                        }
+                    },
+                )
+            }
         },
         floatingActionButton = {
-            if (selectedPersonId == null) {
+            if (!fullscreenMode && selectedPersonId == null) {
                 Box {
                     FloatingActionButton(onClick = { addMenuExpanded = true }) {
                         Icon(Icons.Rounded.Add, contentDescription = "添加")
@@ -277,7 +287,7 @@ fun GraphScreen(
                 .fillMaxSize()
                 .padding(padding),
         ) {
-            if (searchVisible) {
+            if (!fullscreenMode && searchVisible) {
                 OutlinedTextField(
                     value = state.searchQuery,
                     onValueChange = viewModel::setSearchQuery,
@@ -290,7 +300,8 @@ fun GraphScreen(
                 )
             }
 
-            TabRow(selectedTabIndex = state.graphMode.ordinal) {
+            if (!fullscreenMode) {
+                TabRow(selectedTabIndex = state.graphMode.ordinal) {
                 GraphMode.entries.forEach { mode ->
                     Tab(
                         selected = state.graphMode == mode,
@@ -304,9 +315,10 @@ fun GraphScreen(
                         text = { Text(mode.displayName()) },
                     )
                 }
+                }
             }
 
-            if (state.graphMode == GraphMode.ALL) {
+            if (!fullscreenMode && state.graphMode == GraphMode.ALL) {
                 LazyRow(
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(
                         horizontal = 16.dp,
@@ -353,6 +365,16 @@ fun GraphScreen(
                 )
             } else {
                 Box(modifier = Modifier.weight(1f)) {
+                    if (fullscreenMode) {
+                        IconButton(
+                            onClick = onExitFullscreen,
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .padding(12.dp),
+                        ) {
+                            Icon(Icons.Rounded.Close, contentDescription = "退出全屏")
+                        }
+                    }
                     GraphCanvas(
                         people = visiblePeople,
                         edgeGroups = edgeGroups,
@@ -446,7 +468,9 @@ fun GraphScreen(
                                         onClick = { onPersonClick(selectedPerson.id) },
                                     ) {
                                         Text(
-                                            if (state.inferenceCandidatesFor(selectedPerson.id).isNotEmpty()) {
+                                            if (fullscreenMode) {
+                                                "退出全屏"
+                                            } else if (state.inferenceCandidatesFor(selectedPerson.id).isNotEmpty()) {
                                                 "查看候选"
                                             } else {
                                                 "查看详情"

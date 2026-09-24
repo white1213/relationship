@@ -54,6 +54,9 @@ class RelationshipRepository(
     suspend fun getRelationship(relationshipId: String): RelationshipEntity? =
         dao.getRelationship(relationshipId)
 
+    suspend fun getTagNamesForPerson(personId: String): List<String> =
+        dao.getTagNamesForPerson(personId)
+
     suspend fun relationshipCountForPerson(personId: String): Int =
         dao.relationshipCountForPerson(personId)
 

@@ -3,6 +3,8 @@ package com.relationship.graph
 import android.app.Application
 import com.google.gson.Gson
 import com.relationship.graph.data.RelationshipRepository
+import com.relationship.graph.data.ai.AiClient
+import com.relationship.graph.data.ai.AiSettingsStore
 import com.relationship.graph.data.backup.BackupManager
 import com.relationship.graph.data.local.AppDatabase
 import com.relationship.graph.data.preferences.GraphPreferencesStore
@@ -23,14 +25,17 @@ class RelationshipApplication : Application() {
         super.onCreate()
         val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val securityStore = SecurityStore(this)
+        val secretStore = SecretStore(this)
         container = AppContainer(
             repository = RelationshipRepository(
                 context = this,
-                database = AppDatabase.create(this, SecretStore(this)),
+                database = AppDatabase.create(this, secretStore),
             ),
             backupManager = null,
             gson = Gson(),
             graphPreferencesStore = GraphPreferencesStore(this),
+            aiSettingsStore = AiSettingsStore(this, secretStore),
+            aiClient = AiClient(Gson()),
         )
         container = container.copy(
             backupManager = BackupManager(
@@ -48,4 +53,6 @@ data class AppContainer(
     val backupManager: BackupManager?,
     val gson: Gson,
     val graphPreferencesStore: GraphPreferencesStore,
+    val aiSettingsStore: AiSettingsStore,
+    val aiClient: AiClient,
 )

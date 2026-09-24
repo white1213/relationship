@@ -1,11 +1,13 @@
 package com.relationship.graph.ui
 
 import android.content.res.Configuration
+import android.content.Intent
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AccountTree
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.People
 import androidx.compose.material.icons.rounded.RecordVoiceOver
 import androidx.compose.material.icons.rounded.Settings
@@ -35,7 +37,10 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.relationship.graph.RelationshipApplication
+import com.relationship.graph.GraphFullscreenActivity
 import com.relationship.graph.ui.screens.BackupScreen
+import com.relationship.graph.ui.screens.AiAssistantScreen
+import com.relationship.graph.ui.screens.AiSettingsScreen
 import com.relationship.graph.ui.screens.GraphScreen
 import com.relationship.graph.ui.screens.KinshipQueryScreen
 import com.relationship.graph.ui.screens.PeopleScreen
@@ -52,6 +57,8 @@ private object Routes {
     const val People = "people"
     const val Kinship = "kinship"
     const val Settings = "settings"
+    const val Ai = "ai"
+    const val AiSettings = "ai-settings"
     const val Backup = "backup"
     const val PersonDetail = "person/{personId}"
     const val PersonEditor = "person-editor?personId={personId}"
@@ -68,6 +75,9 @@ private object Routes {
 @Composable
 fun RelationshipApp(
     viewModel: RelationshipViewModel = viewModel(),
+    fullscreenGraph: Boolean = false,
+    initialGraphMode: com.relationship.graph.data.local.GraphMode? = null,
+    onExitFullscreen: () -> Unit = {},
 ) {
     val app = LocalContext.current.applicationContext as RelationshipApplication
     val lockState by app.appLockController.state.collectAsStateWithLifecycle()
@@ -85,11 +95,29 @@ fun RelationshipApp(
             onBiometricUnlock = app.appLockController::unlockWithBiometric,
             onClearError = app.appLockController::clearError,
         )
-        com.relationship.graph.security.LockPhase.UNLOCKED -> MainNavigation(
-            viewModel = viewModel,
-            uiState = uiState,
-            onLock = app.appLockController::lockNow,
-        )
+        com.relationship.graph.security.LockPhase.UNLOCKED -> {
+            if (fullscreenGraph) {
+                LaunchedEffect(initialGraphMode) {
+                    initialGraphMode?.let(viewModel::setGraphMode)
+                }
+                GraphScreen(
+                    state = uiState,
+                    viewModel = viewModel,
+                    onPersonClick = { onExitFullscreen() },
+                    onAddPerson = {},
+                    onAddRelationship = {},
+                    onEditRelationship = { _, _ -> },
+                    fullscreenMode = true,
+                    onExitFullscreen = onExitFullscreen,
+                )
+            } else {
+                MainNavigation(
+                    viewModel = viewModel,
+                    uiState = uiState,
+                    onLock = app.appLockController::lockNow,
+                )
+            }
+        }
     }
 }
 
@@ -100,11 +128,20 @@ private fun MainNavigation(
     onLock: () -> Unit,
 ) {
     val navController = rememberNavController()
+    val aiViewModel: AiAssistantViewModel = viewModel()
+    val aiState by aiViewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
+    val context = LocalContext.current
     val isLandscape = LocalConfiguration.current.orientation ==
         Configuration.ORIENTATION_LANDSCAPE
-    val topLevelRoutes = setOf(Routes.Graph, Routes.People, Routes.Kinship, Routes.Settings)
+    val topLevelRoutes = setOf(
+        Routes.Graph,
+        Routes.People,
+        Routes.Kinship,
+        Routes.Ai,
+        Routes.Settings,
+    )
 
     LaunchedEffect(Unit) {
         viewModel.messages.collect { snackbarHostState.showSnackbar(it) }
@@ -132,6 +169,12 @@ private fun MainNavigation(
                         onClick = { navController.navigateTopLevel(Routes.Kinship) },
                         icon = { Icon(Icons.Rounded.RecordVoiceOver, contentDescription = null) },
                         label = { Text("称谓") },
+                    )
+                    NavigationBarItem(
+                        selected = currentRoute == Routes.Ai,
+                        onClick = { navController.navigateTopLevel(Routes.Ai) },
+                        icon = { Icon(Icons.Rounded.AutoAwesome, contentDescription = null) },
+                        label = { Text("AI") },
                     )
                     NavigationBarItem(
                         selected = currentRoute == Routes.Settings,
@@ -169,6 +212,12 @@ private fun MainNavigation(
                         label = { Text("称谓") },
                     )
                     NavigationRailItem(
+                        selected = currentRoute == Routes.Ai,
+                        onClick = { navController.navigateTopLevel(Routes.Ai) },
+                        icon = { Icon(Icons.Rounded.AutoAwesome, contentDescription = null) },
+                        label = { Text("AI") },
+                    )
+                    NavigationRailItem(
                         selected = currentRoute == Routes.Settings,
                         onClick = { navController.navigateTopLevel(Routes.Settings) },
                         icon = { Icon(Icons.Rounded.Settings, contentDescription = null) },
@@ -191,6 +240,16 @@ private fun MainNavigation(
                     onEditRelationship = { relationshipId, _ ->
                         navController.navigate(Routes.relationEditor(relationshipId = relationshipId))
                     },
+                    onOpenFullscreen = {
+                        context.startActivity(
+                            Intent(context, GraphFullscreenActivity::class.java).apply {
+                                putExtra(
+                                    GraphFullscreenActivity.EXTRA_GRAPH_MODE,
+                                    uiState.graphMode.name,
+                                )
+                            },
+                        )
+                    },
                 )
             }
             composable(Routes.People) {
@@ -203,6 +262,32 @@ private fun MainNavigation(
             }
             composable(Routes.Kinship) {
                 KinshipQueryScreen(state = uiState)
+            }
+            composable(Routes.Ai) {
+                AiAssistantScreen(
+                    state = aiState,
+                    onSend = aiViewModel::send,
+                    onConfirmAction = { messageId, actionId ->
+                        aiState.messages
+                            .firstOrNull { it.id == messageId }
+                            ?.proposedActions
+                            ?.firstOrNull { it.id == actionId }
+                            ?.let { aiViewModel.confirmAction(messageId, it) }
+                    },
+                    onRejectAction = aiViewModel::rejectAction,
+                    onClear = aiViewModel::clearConversation,
+                    onOpenSettings = { navController.navigate(Routes.AiSettings) },
+                )
+            }
+            composable(Routes.AiSettings) {
+                AiSettingsScreen(
+                    settings = aiState.settings,
+                    onSave = { baseUrl, model, apiKey, consent ->
+                        aiViewModel.saveSettings(baseUrl, model, apiKey, consent)
+                        navController.popBackStack()
+                    },
+                    onBack = navController::popBackStack,
+                )
             }
             composable(
                 route = Routes.PersonDetail,
@@ -269,6 +354,7 @@ private fun MainNavigation(
                     state = uiState,
                     app = LocalContext.current.applicationContext as RelationshipApplication,
                     onOpenBackup = { navController.navigate(Routes.Backup) },
+                    onOpenAiSettings = { navController.navigate(Routes.AiSettings) },
                     onSetMyPerson = viewModel::setMyPerson,
                     onLock = onLock,
                 )

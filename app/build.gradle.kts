@@ -13,8 +13,8 @@ android {
         applicationId = "com.relationship.graph"
         minSdk = 26
         targetSdk = 35
-        versionCode = 10
-        versionName = "1.6.0"
+        versionCode = 11
+        versionName = "1.6.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -98,6 +98,7 @@ dependencies {
     implementation(libs.sqlcipher)
     implementation(libs.coil.compose)
     implementation(libs.gson)
+    implementation(libs.okhttp)
 
     testImplementation(libs.junit)
 }

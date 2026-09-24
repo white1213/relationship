@@ -28,6 +28,25 @@ class SecretStore(context: Context) {
         return random
     }
 
+    fun putSecret(key: String, value: String) {
+        if (value.isBlank()) {
+            removeSecret(key)
+            return
+        }
+        preferences.edit()
+            .putString(key, Base64.encodeToString(encrypt(value.toByteArray()), Base64.NO_WRAP))
+            .apply()
+    }
+
+    fun getSecret(key: String): String? {
+        val encoded = preferences.getString(key, null) ?: return null
+        return decrypt(Base64.decode(encoded, Base64.NO_WRAP)).toString(Charsets.UTF_8)
+    }
+
+    fun removeSecret(key: String) {
+        preferences.edit().remove(key).apply()
+    }
+
     private fun encrypt(plainText: ByteArray): ByteArray {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
