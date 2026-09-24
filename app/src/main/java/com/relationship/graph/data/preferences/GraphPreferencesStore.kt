@@ -16,6 +16,11 @@ class GraphPreferencesStore(context: Context) {
     val myPersonId: Flow<String?> = dataStore.data.map { it[MY_PERSON_ID] }
     val showInferenceSuggestions: Flow<Boolean> =
         dataStore.data.map { it[SHOW_INFERENCE_SUGGESTIONS] ?: true }
+    val graphDisplayMode: Flow<GraphDisplayMode> = dataStore.data.map {
+        it[GRAPH_DISPLAY_MODE]
+            ?.let(GraphDisplayMode::valueOf)
+            ?: GraphDisplayMode.SIMPLE
+    }
 
     suspend fun setMyPersonId(personId: String) {
         dataStore.edit { it[MY_PERSON_ID] = personId }
@@ -29,9 +34,14 @@ class GraphPreferencesStore(context: Context) {
         dataStore.edit { it[SHOW_INFERENCE_SUGGESTIONS] = enabled }
     }
 
+    suspend fun setGraphDisplayMode(mode: GraphDisplayMode) {
+        dataStore.edit { it[GRAPH_DISPLAY_MODE] = mode.name }
+    }
+
     private companion object {
         val MY_PERSON_ID = stringPreferencesKey("my_person_id")
         val SHOW_INFERENCE_SUGGESTIONS =
             booleanPreferencesKey("show_inference_suggestions")
+        val GRAPH_DISPLAY_MODE = stringPreferencesKey("graph_display_mode")
     }
 }

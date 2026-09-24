@@ -17,6 +17,17 @@ enum class InferenceConfidence {
     MEDIUM,
 }
 
+enum class InferenceConfirmationMode {
+    AS_CHILD,
+    AS_STEP_CHILD,
+}
+
+private enum class RelativeAge {
+    OLDER,
+    YOUNGER,
+    UNKNOWN,
+}
+
 enum class InferenceRule(
     val id: String,
     val steps: Int,
@@ -43,14 +54,44 @@ data class InferredRelationshipCandidate(
     val rule: InferenceRule,
     val reason: String,
     val supportingRelationshipIds: Set<String>,
+    val alternativeRelationTypeId: String? = null,
+    val alternativeLabelForFrom: String? = null,
+    val alternativeLabelForTo: String? = null,
 ) {
     val evidenceFingerprint: String
         get() = supportingRelationshipIds.sorted().joinToString(",")
 
-    fun labelFor(personId: String): String = when (personId) {
-        fromPersonId -> labelForFrom
-        toPersonId -> labelForTo
-        else -> ""
+    fun labelFor(
+        personId: String,
+        confirmationMode: InferenceConfirmationMode = InferenceConfirmationMode.AS_CHILD,
+    ): String {
+        val useAlternative =
+            rule == InferenceRule.STEP_PARENT &&
+                confirmationMode == InferenceConfirmationMode.AS_STEP_CHILD
+        return when (personId) {
+            fromPersonId -> if (useAlternative) {
+                alternativeLabelForFrom ?: labelForFrom
+            } else {
+                labelForFrom
+            }
+            toPersonId -> if (useAlternative) {
+                alternativeLabelForTo ?: labelForTo
+            } else {
+                labelForTo
+            }
+            else -> ""
+        }
+    }
+
+    fun relationTypeFor(
+        confirmationMode: InferenceConfirmationMode = InferenceConfirmationMode.AS_CHILD,
+    ): String = if (
+        rule == InferenceRule.STEP_PARENT &&
+        confirmationMode == InferenceConfirmationMode.AS_STEP_CHILD
+    ) {
+        alternativeRelationTypeId ?: relationTypeId
+    } else {
+        relationTypeId
     }
 }
 
@@ -114,6 +155,9 @@ object InferenceEngine {
             toLabel: String,
             reason: String,
             evidence: Collection<String>,
+            alternativeRelationTypeId: String? = null,
+            alternativeFromLabel: String? = null,
+            alternativeToLabel: String? = null,
         ) {
             if (from.id == to.id) return
             candidates += InferredRelationshipCandidate(
@@ -126,6 +170,9 @@ object InferenceEngine {
                 rule = rule,
                 reason = reason,
                 supportingRelationshipIds = evidence.toSet(),
+                alternativeRelationTypeId = alternativeRelationTypeId,
+                alternativeLabelForFrom = alternativeFromLabel,
+                alternativeLabelForTo = alternativeToLabel,
             )
         }
 
@@ -276,9 +323,9 @@ object InferenceEngine {
                             from = anchor,
                             to = child,
                             rule = InferenceRule.STEP_PARENT,
-                            typeId = InferenceRelationTypeIds.STEP_PARENT,
-                            fromLabel = stepParentLabel(anchor),
-                            toLabel = stepChildLabel(child),
+                            typeId = "preset_parent_child",
+                            fromLabel = parentLabel(anchor),
+                            toLabel = childLabel(child),
                             reason = "${spouse.name}的子女",
                             evidence = listOfNotNull(
                                 spousesByPerson[anchor.id]?.firstOrNull { it == spouse.id },
@@ -286,18 +333,22 @@ object InferenceEngine {
                                     it.childPersonId == child.id
                                 }?.relationshipId,
                             ),
+                            alternativeRelationTypeId = InferenceRelationTypeIds.STEP_PARENT,
+                            alternativeFromLabel = stepParentLabel(anchor),
+                            alternativeToLabel = stepChildLabel(child),
                         )
                     }
                 }
 
                 siblings(spouse.id).forEach { spouseSibling ->
+                    val labels = spouseSiblingLabels(anchor, spouse, spouseSibling)
                     addSymmetric(
                         first = anchor,
                         second = spouseSibling,
                         rule = InferenceRule.SIBLING_IN_LAW,
                         typeId = InferenceRelationTypeIds.SIBLING_IN_LAW,
-                        firstLabel = "配偶的兄弟姐妹",
-                        secondLabel = "兄弟姐妹的配偶",
+                        firstLabel = labels.first,
+                        secondLabel = labels.second,
                         reason = "${spouse.name}的兄弟姐妹",
                         evidence = siblingEvidence(
                             spouse.id,
@@ -331,13 +382,14 @@ object InferenceEngine {
 
             siblings(anchor.id).forEach { sibling ->
                 spouses(sibling.id).forEach { siblingSpouse ->
+                    val labels = siblingSpouseLabels(anchor, sibling, siblingSpouse)
                     addSymmetric(
                         first = anchor,
                         second = siblingSpouse,
                         rule = InferenceRule.SIBLING_IN_LAW,
                         typeId = InferenceRelationTypeIds.SIBLING_IN_LAW,
-                        firstLabel = "兄弟姐妹的配偶",
-                        secondLabel = "配偶的兄弟姐妹",
+                        firstLabel = labels.first,
+                        secondLabel = labels.second,
                         reason = "${sibling.name}的配偶",
                         evidence = listOfNotNull(
                             siblingEvidence(
@@ -359,9 +411,9 @@ object InferenceEngine {
                             from = stepParent,
                             to = anchor,
                             rule = InferenceRule.STEP_PARENT,
-                            typeId = InferenceRelationTypeIds.STEP_PARENT,
-                            fromLabel = stepParentLabel(stepParent),
-                            toLabel = stepChildLabel(anchor),
+                            typeId = "preset_parent_child",
+                            fromLabel = parentLabel(stepParent),
+                            toLabel = childLabel(anchor),
                             reason = "${parent.name}的配偶",
                             evidence = listOfNotNull(
                                 parentsByChild[anchor.id]?.firstOrNull {
@@ -371,6 +423,9 @@ object InferenceEngine {
                                     it == stepParent.id
                                 },
                             ),
+                            alternativeRelationTypeId = InferenceRelationTypeIds.STEP_PARENT,
+                            alternativeFromLabel = stepParentLabel(stepParent),
+                            alternativeToLabel = stepChildLabel(anchor),
                         )
                     }
                 }
@@ -433,10 +488,18 @@ object InferenceEngine {
     }
 
     private fun siblingLabel(person: PersonEntity, relative: PersonEntity): String {
-        val older = isOlderThan(person, relative)
+        val age = relativeAge(person, relative)
         return when (person.gender) {
-            Gender.MALE -> if (older) "哥哥" else "弟弟"
-            Gender.FEMALE -> if (older) "姐姐" else "妹妹"
+            Gender.MALE -> when (age) {
+                RelativeAge.OLDER -> "哥哥"
+                RelativeAge.YOUNGER -> "弟弟"
+                RelativeAge.UNKNOWN -> "兄弟"
+            }
+            Gender.FEMALE -> when (age) {
+                RelativeAge.OLDER -> "姐姐"
+                RelativeAge.YOUNGER -> "妹妹"
+                RelativeAge.UNKNOWN -> "姐妹"
+            }
             Gender.UNSPECIFIED -> "兄弟姐妹"
         }
     }
@@ -475,7 +538,11 @@ object InferenceEngine {
         side: String,
     ): String = when (person.gender) {
         Gender.MALE -> when (side) {
-            "父系" -> if (isOlderThan(person, parent)) "伯父" else "叔父"
+            "父系" -> when (relativeAge(person, parent)) {
+                RelativeAge.OLDER -> "伯父"
+                RelativeAge.YOUNGER -> "叔父"
+                RelativeAge.UNKNOWN -> "叔伯"
+            }
             "母系" -> "舅舅"
             else -> "叔伯"
         }
@@ -503,10 +570,18 @@ object InferenceEngine {
         relative: PersonEntity,
         side: String,
     ): String {
-        val older = isOlderThan(person, relative)
+        val age = relativeAge(person, relative)
         return when (person.gender) {
-            Gender.MALE -> if (older) "${side}兄" else "${side}弟"
-            Gender.FEMALE -> if (older) "${side}姐" else "${side}妹"
+            Gender.MALE -> when (age) {
+                RelativeAge.OLDER -> "${side}兄"
+                RelativeAge.YOUNGER -> "${side}弟"
+                RelativeAge.UNKNOWN -> "${side}表亲"
+            }
+            Gender.FEMALE -> when (age) {
+                RelativeAge.OLDER -> "${side}姐"
+                RelativeAge.YOUNGER -> "${side}妹"
+                RelativeAge.UNKNOWN -> "${side}表亲"
+            }
             Gender.UNSPECIFIED -> if (side == "堂") "堂表亲" else "表亲"
         }
     }
@@ -541,16 +616,152 @@ object InferenceEngine {
         Gender.UNSPECIFIED -> "继子女"
     }
 
+    private fun parentLabel(person: PersonEntity): String = when (person.gender) {
+        Gender.MALE -> "父亲"
+        Gender.FEMALE -> "母亲"
+        Gender.UNSPECIFIED -> "父母"
+    }
+
+    private fun childLabel(person: PersonEntity): String = when (person.gender) {
+        Gender.MALE -> "儿子"
+        Gender.FEMALE -> "女儿"
+        Gender.UNSPECIFIED -> "子女"
+    }
+
+    private fun spouseSiblingLabels(
+        anchor: PersonEntity,
+        spouse: PersonEntity,
+        relative: PersonEntity,
+    ): Pair<String, String> {
+        val anchorLabel = when {
+            anchor.gender == Gender.MALE && spouse.gender == Gender.FEMALE ->
+                when (relative.gender) {
+                    Gender.MALE -> when (relativeAge(relative, spouse)) {
+                        RelativeAge.OLDER -> "大舅子"
+                        RelativeAge.YOUNGER -> "小舅子"
+                        RelativeAge.UNKNOWN -> "配偶的兄弟"
+                    }
+                    Gender.FEMALE -> when (relativeAge(relative, spouse)) {
+                        RelativeAge.OLDER -> "大姨子"
+                        RelativeAge.YOUNGER -> "小姨子"
+                        RelativeAge.UNKNOWN -> "配偶的姐妹"
+                    }
+                    Gender.UNSPECIFIED -> "配偶的兄弟姐妹"
+                }
+            anchor.gender == Gender.FEMALE && spouse.gender == Gender.MALE ->
+                when (relative.gender) {
+                    Gender.MALE -> when (relativeAge(relative, spouse)) {
+                        RelativeAge.OLDER -> "大伯子"
+                        RelativeAge.YOUNGER -> "小叔子"
+                        RelativeAge.UNKNOWN -> "配偶的兄弟"
+                    }
+                    Gender.FEMALE -> when (relativeAge(relative, spouse)) {
+                        RelativeAge.OLDER -> "大姑子"
+                        RelativeAge.YOUNGER -> "小姑子"
+                        RelativeAge.UNKNOWN -> "配偶的姐妹"
+                    }
+                    Gender.UNSPECIFIED -> "配偶的兄弟姐妹"
+                }
+            else -> "配偶的兄弟姐妹"
+        }
+        val reverseLabel = when {
+            spouse.gender == Gender.FEMALE &&
+                relative.gender == Gender.MALE &&
+                anchor.gender == Gender.MALE ->
+                when (relativeAge(spouse, relative)) {
+                    RelativeAge.OLDER -> "姐夫"
+                    RelativeAge.YOUNGER -> "妹夫"
+                    RelativeAge.UNKNOWN -> "姐妹的配偶"
+                }
+            spouse.gender == Gender.FEMALE &&
+                relative.gender == Gender.FEMALE &&
+                anchor.gender == Gender.MALE ->
+                when (relativeAge(spouse, relative)) {
+                    RelativeAge.OLDER -> "姐夫"
+                    RelativeAge.YOUNGER -> "妹夫"
+                    RelativeAge.UNKNOWN -> "姐妹的配偶"
+                }
+            spouse.gender == Gender.MALE &&
+                relative.gender == Gender.MALE &&
+                anchor.gender == Gender.FEMALE ->
+                when (relativeAge(spouse, relative)) {
+                    RelativeAge.OLDER -> "嫂子"
+                    RelativeAge.YOUNGER -> "弟媳"
+                    RelativeAge.UNKNOWN -> "兄弟的配偶"
+                }
+            spouse.gender == Gender.MALE &&
+                relative.gender == Gender.FEMALE &&
+                anchor.gender == Gender.FEMALE ->
+                when (relativeAge(spouse, relative)) {
+                    RelativeAge.OLDER -> "嫂子"
+                    RelativeAge.YOUNGER -> "弟媳"
+                    RelativeAge.UNKNOWN -> "兄弟的配偶"
+                }
+            else -> "兄弟姐妹的配偶"
+        }
+        return anchorLabel to reverseLabel
+    }
+
+    private fun siblingSpouseLabels(
+        anchor: PersonEntity,
+        sibling: PersonEntity,
+        relative: PersonEntity,
+    ): Pair<String, String> {
+        val anchorLabel = when {
+            sibling.gender == Gender.MALE && relative.gender == Gender.FEMALE ->
+                when (relativeAge(sibling, anchor)) {
+                    RelativeAge.OLDER -> "嫂子"
+                    RelativeAge.YOUNGER -> "弟媳"
+                    RelativeAge.UNKNOWN -> "兄弟的配偶"
+                }
+            sibling.gender == Gender.FEMALE && relative.gender == Gender.MALE ->
+                when (relativeAge(sibling, anchor)) {
+                    RelativeAge.OLDER -> "姐夫"
+                    RelativeAge.YOUNGER -> "妹夫"
+                    RelativeAge.UNKNOWN -> "姐妹的配偶"
+                }
+            else -> "兄弟姐妹的配偶"
+        }
+        val reverseLabel = when {
+            sibling.gender == Gender.MALE && anchor.gender == Gender.MALE ->
+                when (relativeAge(sibling, anchor)) {
+                    RelativeAge.OLDER -> "小叔子"
+                    RelativeAge.YOUNGER -> "大伯子"
+                    RelativeAge.UNKNOWN -> "配偶的兄弟"
+                }
+            sibling.gender == Gender.MALE && anchor.gender == Gender.FEMALE ->
+                when (relativeAge(sibling, anchor)) {
+                    RelativeAge.OLDER -> "小姑子"
+                    RelativeAge.YOUNGER -> "大姑子"
+                    RelativeAge.UNKNOWN -> "配偶的姐妹"
+                }
+            sibling.gender == Gender.FEMALE && anchor.gender == Gender.FEMALE ->
+                when (relativeAge(sibling, anchor)) {
+                    RelativeAge.OLDER -> "小姨子"
+                    RelativeAge.YOUNGER -> "大姨子"
+                    RelativeAge.UNKNOWN -> "配偶的姐妹"
+                }
+            sibling.gender == Gender.FEMALE && anchor.gender == Gender.MALE ->
+                when (relativeAge(sibling, anchor)) {
+                    RelativeAge.OLDER -> "小舅子"
+                    RelativeAge.YOUNGER -> "大舅子"
+                    RelativeAge.UNKNOWN -> "配偶的兄弟"
+                }
+            else -> "配偶的兄弟姐妹"
+        }
+        return anchorLabel to reverseLabel
+    }
+
     private fun parentSide(parent: PersonEntity): String = when (parent.gender) {
         Gender.MALE -> "父系"
         Gender.FEMALE -> "母系"
         Gender.UNSPECIFIED -> "未知"
     }
 
-    private fun isOlderThan(first: PersonEntity, second: PersonEntity): Boolean {
-        val firstDate = parseBirthday(first.birthday) ?: return false
-        val secondDate = parseBirthday(second.birthday) ?: return false
-        return firstDate.isBefore(secondDate)
+    private fun relativeAge(first: PersonEntity, second: PersonEntity): RelativeAge {
+        val firstDate = parseBirthday(first.birthday) ?: return RelativeAge.UNKNOWN
+        val secondDate = parseBirthday(second.birthday) ?: return RelativeAge.UNKNOWN
+        return if (firstDate.isBefore(secondDate)) RelativeAge.OLDER else RelativeAge.YOUNGER
     }
 
     private fun parseBirthday(value: String): LocalDate? =

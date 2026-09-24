@@ -104,6 +104,14 @@ class RelationshipRepository(
         dao.saveGraphPosition(personId, mode, x, y)
     }
 
+    suspend fun clearGraphPositions(mode: GraphMode) {
+        dao.deleteGraphPositionsForMode(mode)
+    }
+
+    suspend fun restoreGraphPositions(positions: List<GraphPositionEntity>) {
+        if (positions.isNotEmpty()) dao.upsertGraphPositions(positions)
+    }
+
     suspend fun dismissInference(dismissal: InferenceDismissalEntity) {
         dao.upsertInferenceDismissal(dismissal)
     }

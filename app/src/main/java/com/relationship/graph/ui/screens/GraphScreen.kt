@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.AutoFixHigh
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.PersonAdd
@@ -51,11 +52,15 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import com.relationship.graph.data.local.RelationCategory
 import com.relationship.graph.data.local.GraphMode
+import com.relationship.graph.data.local.GraphPositionEntity
 import com.relationship.graph.data.RelationshipSemantics
 import com.relationship.graph.data.local.RelationTypeEntity
 import com.relationship.graph.data.local.RelationshipEntity
 import com.relationship.graph.data.inference.InferredRelationshipCandidate
 import com.relationship.graph.data.inference.InferenceConfidence
+import com.relationship.graph.data.inference.InferenceConfirmationMode
+import com.relationship.graph.data.inference.InferenceRule
+import com.relationship.graph.data.preferences.GraphDisplayMode
 import com.relationship.graph.ui.AppUiState
 import com.relationship.graph.ui.RelationshipViewModel
 import com.relationship.graph.ui.components.AppTopBar
@@ -68,6 +73,7 @@ import com.relationship.graph.ui.graph.GraphFocusEngine
 import com.relationship.graph.ui.graph.GraphFocusScope
 import com.relationship.graph.ui.graph.buildEdgeGroups
 import com.relationship.graph.ui.relationshipSentence
+import kotlinx.coroutines.delay
 
 @Composable
 fun GraphScreen(
@@ -91,6 +97,9 @@ fun GraphScreen(
     var branchDialogPersonId by rememberSaveable { mutableStateOf<String?>(null) }
     var inferenceCandidateDialog by remember { mutableStateOf<InferredRelationshipCandidate?>(null) }
     var showLegend by rememberSaveable { mutableStateOf(false) }
+    var organizeRequestId by rememberSaveable { mutableStateOf(0) }
+    var organizeUndo by remember { mutableStateOf<List<GraphPositionEntity>?>(null) }
+    var showOrganizeUndo by remember { mutableStateOf(false) }
 
     val modeRelationships = remember(
         state.relationships,
@@ -189,11 +198,35 @@ fun GraphScreen(
         }
     }
 
+    LaunchedEffect(organizeRequestId) {
+        if (organizeRequestId > 0 && showOrganizeUndo) {
+            delay(5_000)
+            showOrganizeUndo = false
+            organizeUndo = null
+        }
+    }
+
     Scaffold(
         topBar = {
             AppTopBar(
                 title = "关系图谱",
                 actions = {
+                    IconButton(
+                        onClick = {
+                            organizeUndo = state.graphPositions.filter {
+                                it.mode == state.graphMode
+                            }
+                            organizeRequestId++
+                            selectedPersonId = null
+                            focusPersonId = null
+                            focusScope = null
+                            centerOnPersonId = null
+                            viewModel.clearGraphPositions(state.graphMode)
+                            showOrganizeUndo = true
+                        },
+                    ) {
+                        Icon(Icons.Rounded.AutoFixHigh, contentDescription = "一键整理")
+                    }
                     IconButton(onClick = { showLegend = true }) {
                         Icon(Icons.Rounded.Info, contentDescription = "图例")
                     }
@@ -332,6 +365,7 @@ fun GraphScreen(
                             state.inferredCandidates
                         },
                         showInferenceSuggestions = state.showInferenceSuggestions,
+                        displayMode = state.graphDisplayMode,
                         highlightedPersonIds = highlightedPeople,
                         highlightedEdgeKeys = highlightedEdges,
                         selectedPersonId = selectedPersonId,
@@ -339,6 +373,8 @@ fun GraphScreen(
                         centerRequestKey = focusPersonId?.let {
                             "$it:${focusScope?.name}:${visiblePeople.size}"
                         },
+                        fitRequestKey = "$organizeRequestId:" +
+                            state.graphPositions.count { it.mode == state.graphMode },
                         onPersonSelected = { personId ->
                             selectedPersonId = personId
                             focusPersonId = personId
@@ -443,6 +479,33 @@ fun GraphScreen(
                                     ) {
                                         Text("显示全部")
                                     }
+                                }
+                            }
+                        }
+                    }
+
+                    if (showOrganizeUndo) {
+                        Surface(
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(12.dp),
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp),
+                            tonalElevation = 5.dp,
+                            shadowElevation = 5.dp,
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text("已整理当前视图")
+                                TextButton(
+                                    onClick = {
+                                        organizeUndo?.let(viewModel::restoreGraphPositions)
+                                        organizeUndo = null
+                                        showOrganizeUndo = false
+                                    },
+                                ) {
+                                    Text("撤销")
                                 }
                             }
                         }
@@ -579,6 +642,8 @@ fun GraphScreen(
         GraphLegendDialog(
             showInferenceSuggestions = state.showInferenceSuggestions,
             onShowInferenceSuggestionsChange = viewModel::setShowInferenceSuggestions,
+            displayMode = state.graphDisplayMode,
+            onDisplayModeChange = viewModel::setGraphDisplayMode,
             onDismiss = { showLegend = false },
         )
     }
@@ -612,13 +677,37 @@ fun GraphScreen(
                 }
             },
             confirmButton = {
-                TextButton(
-                    onClick = {
-                        viewModel.confirmInference(candidate)
-                        inferenceCandidateDialog = null
-                    },
-                ) {
-                    Text("添加关系")
+                Row {
+                    if (candidate.rule == InferenceRule.STEP_PARENT) {
+                        TextButton(
+                            onClick = {
+                                viewModel.confirmInference(
+                                    candidate,
+                                    InferenceConfirmationMode.AS_STEP_CHILD,
+                                )
+                                inferenceCandidateDialog = null
+                            },
+                        ) {
+                            Text("仅作为继亲")
+                        }
+                    }
+                    TextButton(
+                        onClick = {
+                            viewModel.confirmInference(
+                                candidate,
+                                InferenceConfirmationMode.AS_CHILD,
+                            )
+                            inferenceCandidateDialog = null
+                        },
+                    ) {
+                        Text(
+                            if (candidate.rule == InferenceRule.STEP_PARENT) {
+                                "添加为子女"
+                            } else {
+                                "添加关系"
+                            },
+                        )
+                    }
                 }
             },
             dismissButton = {
@@ -796,6 +885,8 @@ private fun GraphMode.displayName(): String = when (this) {
 private fun GraphLegendDialog(
     showInferenceSuggestions: Boolean,
     onShowInferenceSuggestionsChange: (Boolean) -> Unit,
+    displayMode: GraphDisplayMode,
+    onDisplayModeChange: (GraphDisplayMode) -> Unit,
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
@@ -841,6 +932,21 @@ private fun GraphLegendDialog(
                     Switch(
                         checked = showInferenceSuggestions,
                         onCheckedChange = onShowInferenceSuggestionsChange,
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("完整关系")
+                    Switch(
+                        checked = displayMode == GraphDisplayMode.FULL,
+                        onCheckedChange = { enabled ->
+                            onDisplayModeChange(
+                                if (enabled) GraphDisplayMode.FULL else GraphDisplayMode.SIMPLE,
+                            )
+                        },
                     )
                 }
             }

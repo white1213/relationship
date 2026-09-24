@@ -40,6 +40,7 @@ import com.relationship.graph.data.local.PersonEntity
 import com.relationship.graph.data.local.RelationTypeEntity
 import com.relationship.graph.data.local.RelationshipEntity
 import com.relationship.graph.data.inference.InferredRelationshipCandidate
+import com.relationship.graph.data.preferences.GraphDisplayMode
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.PI
@@ -76,11 +77,13 @@ fun GraphCanvas(
     graphPositions: List<GraphPositionEntity>,
     inferenceCandidates: List<InferredRelationshipCandidate>,
     showInferenceSuggestions: Boolean,
+    displayMode: GraphDisplayMode,
     highlightedPersonIds: Set<String>?,
     highlightedEdgeKeys: Set<String>?,
     selectedPersonId: String?,
     centerOnPersonId: String?,
     centerRequestKey: String?,
+    fitRequestKey: String?,
     onPersonSelected: (String) -> Unit,
     onPersonLongPress: (String) -> Unit,
     onBackgroundClick: () -> Unit,
@@ -97,6 +100,35 @@ fun GraphCanvas(
         graphPositions
             .filter { it.mode == mode && it.isManuallyPinned }
             .associate { it.personId to LayoutPoint(it.x, it.y) }
+    }
+    val relationshipById = remember(relationships) { relationships.associateBy { it.id } }
+    val selectedAnchorId = selectedPersonId ?: myPersonId
+    val siblingCountByPerson = remember(relationships, relationTypes) {
+        val typeById = relationTypes.associateBy { it.id }
+        val parentEdges = relationships.mapNotNull {
+            RelationshipSemantics.parentChildEdge(it, typeById[it.relationTypeId])
+        }
+        val explicitSiblings = relationships.filter {
+            RelationshipSemantics.kind(typeById[it.relationTypeId]) ==
+                com.relationship.graph.data.FamilyRelationKind.SIBLING
+        }
+        val peopleByParent = parentEdges.groupBy { it.parentPersonId }
+        people.associate { person ->
+            val siblingIds = mutableSetOf<String>()
+            peopleByParent.values.forEach { edges ->
+                if (edges.any { it.childPersonId == person.id }) {
+                    siblingIds += edges.map { it.childPersonId }
+                }
+            }
+            explicitSiblings.forEach { relationship ->
+                when (person.id) {
+                    relationship.fromPersonId -> siblingIds += relationship.toPersonId
+                    relationship.toPersonId -> siblingIds += relationship.fromPersonId
+                }
+            }
+            siblingIds.remove(person.id)
+            person.id to siblingIds.size
+        }
     }
     val layout = remember(
         people,
@@ -172,10 +204,38 @@ fun GraphCanvas(
             }
         }
     }
+    val visibleRoutes = remember(
+        layout.routes,
+        displayMode,
+        mode,
+        selectedPersonId,
+        selectedAnchorId,
+        relationshipById,
+    ) {
+        if (displayMode == GraphDisplayMode.FULL) {
+            layout.routes
+        } else {
+            layout.routes.filter { route ->
+                val touchesSelected = route.relationshipIds.any { relationshipId ->
+                    relationshipById[relationshipId]?.let { relationship ->
+                        relationship.fromPersonId == selectedAnchorId ||
+                            relationship.toPersonId == selectedAnchorId
+                    } == true
+                }
+                isRouteVisible(
+                    style = route.style,
+                    graphMode = mode,
+                    displayMode = displayMode,
+                    touchesSelectedPerson = touchesSelected,
+                )
+            }
+        }
+    }
     val viewportsByMode = remember { mutableStateMapOf<GraphMode, Viewport>() }
     var viewport by remember { mutableStateOf(Viewport()) }
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
     var draggedNodeId by remember { mutableStateOf<String?>(null) }
+    var pendingFitRequestKey by remember { mutableStateOf<String?>(null) }
     val textMeasurer = rememberTextMeasurer()
 
     LaunchedEffect(layout, mode, canvasSize) {
@@ -203,6 +263,21 @@ fun GraphCanvas(
         }
     }
 
+    LaunchedEffect(fitRequestKey) {
+        if (fitRequestKey != null) {
+            pendingFitRequestKey = fitRequestKey
+        }
+    }
+
+    LaunchedEffect(pendingFitRequestKey, layout, canvasSize) {
+        if (pendingFitRequestKey != null && canvasSize.width > 0 && canvasSize.height > 0) {
+            val fitted = fitViewport(layout.positions, canvasSize)
+            viewport = fitted
+            viewportsByMode[mode] = fitted
+            pendingFitRequestKey = null
+        }
+    }
+
     Canvas(
         modifier = modifier
             .fillMaxSize()
@@ -220,7 +295,7 @@ fun GraphCanvas(
                     val activeRoute = if (activeNodeId == null) {
                         hitTestRoute(
                             click = down.position,
-                            routes = layout.routes,
+                            routes = visibleRoutes,
                             viewport = viewport,
                             canvasSize = size,
                         )
@@ -361,7 +436,7 @@ fun GraphCanvas(
             translate(center.x + viewport.pan.x, center.y + viewport.pan.y)
             scale(viewport.zoom, viewport.zoom, pivot = Offset.Zero)
         }) {
-            layout.routes.forEach { route ->
+            visibleRoutes.forEach { route ->
                 val isHighlighted = highlightedEdgeKeys == null ||
                     route.relationshipIds.any { relationshipToGroup[it]?.key in highlightedEdgeKeys }
                 val routeColor = when (route.style) {
@@ -540,6 +615,27 @@ fun GraphCanvas(
                         ),
                     )
                 }
+
+                val siblingCount = siblingCountByPerson[person.id] ?: 0
+                if (displayMode == GraphDisplayMode.SIMPLE && siblingCount > 0 && !isSelected) {
+                    val badgeCenter = position + Offset(-radius * 0.78f, -radius * 0.78f)
+                    drawCircle(color = Color.White.copy(alpha = 0.94f), radius = 9f, center = badgeCenter)
+                    val badge = textMeasurer.measure(
+                        AnnotatedString(siblingCount.toString()),
+                        style = TextStyle(
+                            color = Color(0xFF52647B),
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                        ),
+                    )
+                    drawText(
+                        textLayoutResult = badge,
+                        topLeft = Offset(
+                            badgeCenter.x - badge.size.width / 2f,
+                            badgeCenter.y - badge.size.height / 2f,
+                        ),
+                    )
+                }
             }
         }
 
@@ -615,7 +711,7 @@ fun GraphCanvas(
             }
         }
 
-        layout.routes
+        visibleRoutes
             .sortedByDescending { route ->
                 route.relationshipIds.any { it in selectedRelationshipIds }
             }

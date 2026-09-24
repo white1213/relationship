@@ -228,6 +228,95 @@ class InferenceEngineTest {
         assertEquals("爷爷", candidate.labelForFrom)
     }
 
+    @Test
+    fun spouseChildCandidateDefaultsToChildButKeepsStepAlternative() {
+        val people = listOf(
+            person("parent", "父亲", Gender.MALE),
+            person("spouse", "母亲", Gender.FEMALE),
+            person("child", "孩子", Gender.MALE),
+        )
+        val relationships = listOf(
+            relationship("marriage", "parent", "spouse", spouse),
+            relationship("child", "spouse", "child", parentChild),
+        )
+
+        val candidate = InferenceEngine.infer(
+            people = people,
+            relationships = relationships,
+            relationTypes = PresetRelationTypes.all,
+            dismissals = emptyList(),
+        ).single { it.rule == InferenceRule.STEP_PARENT }
+
+        assertEquals(
+            parentChild,
+            candidate.relationTypeFor(InferenceConfirmationMode.AS_CHILD),
+        )
+        assertEquals("父亲", candidate.labelFor("parent", InferenceConfirmationMode.AS_CHILD))
+        assertEquals("儿子", candidate.labelFor("child", InferenceConfirmationMode.AS_CHILD))
+        assertEquals(
+            InferenceRelationTypeIds.STEP_PARENT,
+            candidate.relationTypeFor(InferenceConfirmationMode.AS_STEP_CHILD),
+        )
+        assertEquals(
+            "继子",
+            candidate.labelFor("child", InferenceConfirmationMode.AS_STEP_CHILD),
+        )
+    }
+
+    @Test
+    fun usesColloquialSiblingInLawLabelsWhenGenderAndBirthdayAreKnown() {
+        val people = listOf(
+            person("wife", "妻子", Gender.FEMALE),
+            person("husband", "丈夫", Gender.MALE, "1990-01-01"),
+            person("youngerBrother", "弟弟", Gender.MALE, "1995-01-01"),
+        )
+        val relationships = listOf(
+            relationship("marriage", "husband", "wife", spouse),
+            relationship("parent1", "grandparent", "husband", parentChild),
+            relationship("parent2", "grandparent", "youngerBrother", parentChild),
+        )
+        val peopleWithParent = people + person("grandparent", "父母")
+
+        val candidate = InferenceEngine.infer(
+            people = peopleWithParent,
+            relationships = relationships,
+            relationTypes = PresetRelationTypes.all,
+            dismissals = emptyList(),
+        ).single {
+            setOf(it.fromPersonId, it.toPersonId) == setOf("wife", "youngerBrother")
+        }
+
+        assertEquals("小叔子", candidate.labelFor("wife"))
+        assertEquals("嫂子", candidate.labelFor("youngerBrother"))
+    }
+
+    @Test
+    fun fallsBackToNeutralSiblingInLawNamesWithoutBirthday() {
+        val people = listOf(
+            person("wife", "妻子", Gender.FEMALE),
+            person("husband", "丈夫", Gender.MALE),
+            person("brother", "兄弟", Gender.MALE),
+            person("grandparent", "父母"),
+        )
+        val relationships = listOf(
+            relationship("marriage", "husband", "wife", spouse),
+            relationship("parent1", "grandparent", "husband", parentChild),
+            relationship("parent2", "grandparent", "brother", parentChild),
+        )
+
+        val candidate = InferenceEngine.infer(
+            people = people,
+            relationships = relationships,
+            relationTypes = PresetRelationTypes.all,
+            dismissals = emptyList(),
+        ).single {
+            setOf(it.fromPersonId, it.toPersonId) == setOf("wife", "brother")
+        }
+
+        assertTrue(candidate.labelFor("wife") in setOf("配偶的兄弟", "配偶的兄弟姐妹"))
+        assertTrue(candidate.labelFor("brother") in setOf("兄弟姐妹的配偶", "兄弟的配偶"))
+    }
+
     private fun infer(
         people: List<PersonEntity>,
         relationships: List<RelationshipEntity>,

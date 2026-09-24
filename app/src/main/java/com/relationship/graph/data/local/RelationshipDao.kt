@@ -145,6 +145,9 @@ interface RelationshipDao {
     @Query("DELETE FROM graph_positions")
     suspend fun deleteAllGraphPositions()
 
+    @Query("DELETE FROM graph_positions WHERE mode = :mode")
+    suspend fun deleteGraphPositionsForMode(mode: GraphMode)
+
     @Query("DELETE FROM inference_dismissals")
     suspend fun deleteAllInferenceDismissals()
 

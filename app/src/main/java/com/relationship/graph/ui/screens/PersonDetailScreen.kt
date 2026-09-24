@@ -38,6 +38,8 @@ import androidx.compose.ui.unit.dp
 import com.relationship.graph.data.local.PersonEntity
 import com.relationship.graph.data.local.RelationshipEntity
 import com.relationship.graph.data.inference.InferenceConfidence
+import com.relationship.graph.data.inference.InferenceConfirmationMode
+import com.relationship.graph.data.inference.InferenceRule
 import com.relationship.graph.data.inference.InferredRelationshipCandidate
 import com.relationship.graph.ui.AppUiState
 import com.relationship.graph.ui.components.AppTopBar
@@ -53,7 +55,10 @@ fun PersonDetailScreen(
     onEdit: () -> Unit,
     onAddRelationship: () -> Unit,
     onEditRelationship: (String) -> Unit,
-    onConfirmInference: (InferredRelationshipCandidate) -> Unit,
+    onConfirmInference: (
+        InferredRelationshipCandidate,
+        InferenceConfirmationMode,
+    ) -> Unit,
     onDismissInference: (InferredRelationshipCandidate) -> Unit,
     onDeletePerson: (PersonEntity) -> Unit,
     onDeleteRelationship: (RelationshipEntity) -> Unit,
@@ -197,10 +202,38 @@ fun PersonDetailScreen(
                                     TextButton(onClick = { onDismissInference(candidate) }) {
                                         Text("忽略")
                                     }
-                                    OutlinedButton(
-                                        onClick = { onConfirmInference(candidate) },
-                                    ) {
-                                        Text("添加关系")
+                                    if (candidate.rule == InferenceRule.STEP_PARENT) {
+                                        TextButton(
+                                            onClick = {
+                                                onConfirmInference(
+                                                    candidate,
+                                                    InferenceConfirmationMode.AS_STEP_CHILD,
+                                                )
+                                            },
+                                        ) {
+                                            Text("仅作为继亲")
+                                        }
+                                        OutlinedButton(
+                                            onClick = {
+                                                onConfirmInference(
+                                                    candidate,
+                                                    InferenceConfirmationMode.AS_CHILD,
+                                                )
+                                            },
+                                        ) {
+                                            Text("添加为子女")
+                                        }
+                                    } else {
+                                        OutlinedButton(
+                                            onClick = {
+                                                onConfirmInference(
+                                                    candidate,
+                                                    InferenceConfirmationMode.AS_CHILD,
+                                                )
+                                            },
+                                        ) {
+                                            Text("添加关系")
+                                        }
                                     }
                                 }
                             }

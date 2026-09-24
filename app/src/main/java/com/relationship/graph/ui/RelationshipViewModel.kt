@@ -19,7 +19,9 @@ import com.relationship.graph.data.local.RelationshipSource
 import com.relationship.graph.data.local.RelationshipEntity
 import com.relationship.graph.data.local.TagEntity
 import com.relationship.graph.data.inference.InferenceEngine
+import com.relationship.graph.data.inference.InferenceConfirmationMode
 import com.relationship.graph.data.inference.InferredRelationshipCandidate
+import com.relationship.graph.data.preferences.GraphDisplayMode
 import java.util.UUID
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -43,6 +45,7 @@ data class AppUiState(
     val inferenceDismissals: List<InferenceDismissalEntity> = emptyList(),
     val inferredCandidates: List<InferredRelationshipCandidate> = emptyList(),
     val showInferenceSuggestions: Boolean = true,
+    val graphDisplayMode: GraphDisplayMode = GraphDisplayMode.SIMPLE,
     val graphMode: GraphMode = GraphMode.FAMILY,
     val myPersonId: String? = null,
     val searchQuery: String = "",
@@ -109,6 +112,7 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
         repository.graphPositions,
         repository.inferenceDismissals,
         app.container.graphPreferencesStore.showInferenceSuggestions,
+        app.container.graphPreferencesStore.graphDisplayMode,
         graphMode,
         app.container.graphPreferencesStore.myPersonId,
         searchQuery,
@@ -126,11 +130,12 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
             graphPositions = values[5] as List<GraphPositionEntity>,
             inferenceDismissals = values[6] as List<InferenceDismissalEntity>,
             showInferenceSuggestions = values[7] as Boolean,
-            graphMode = values[8] as GraphMode,
-            myPersonId = values[9] as String?,
-            searchQuery = values[10] as String,
-            selectedCategory = values[11] as RelationCategory?,
-            inferredCandidates = values[12] as List<InferredRelationshipCandidate>,
+            graphDisplayMode = values[8] as GraphDisplayMode,
+            graphMode = values[9] as GraphMode,
+            myPersonId = values[10] as String?,
+            searchQuery = values[11] as String,
+            selectedCategory = values[12] as RelationCategory?,
+            inferredCandidates = values[13] as List<InferredRelationshipCandidate>,
         )
     }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppUiState())
@@ -294,9 +299,13 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
-    fun confirmInference(candidate: InferredRelationshipCandidate) {
+    fun confirmInference(
+        candidate: InferredRelationshipCandidate,
+        confirmationMode: InferenceConfirmationMode = InferenceConfirmationMode.AS_CHILD,
+    ) {
+        val relationTypeId = candidate.relationTypeFor(confirmationMode)
         val alreadyExists = uiState.value.relationships.any {
-            it.relationTypeId == candidate.relationTypeId &&
+            it.relationTypeId == relationTypeId &&
                 setOf(it.fromPersonId, it.toPersonId) ==
                 setOf(candidate.fromPersonId, candidate.toPersonId)
         }
@@ -316,10 +325,16 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
                         id = UUID.randomUUID().toString(),
                         fromPersonId = candidate.fromPersonId,
                         toPersonId = candidate.toPersonId,
-                        relationTypeId = candidate.relationTypeId,
+                        relationTypeId = relationTypeId,
                         source = RelationshipSource.CONFIRMED_INFERENCE,
-                        labelOverride = candidate.labelForFrom,
-                        inverseLabelOverride = candidate.labelForTo,
+                        labelOverride = candidate.labelFor(
+                            candidate.fromPersonId,
+                            confirmationMode,
+                        ),
+                        inverseLabelOverride = candidate.labelFor(
+                            candidate.toPersonId,
+                            confirmationMode,
+                        ),
                     ),
                 )
             }
@@ -348,6 +363,12 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
+    fun setGraphDisplayMode(mode: GraphDisplayMode) {
+        viewModelScope.launch {
+            app.container.graphPreferencesStore.setGraphDisplayMode(mode)
+        }
+    }
+
     suspend fun importAvatarFromUri(personId: String, uri: Uri): String =
         repository.importAvatarFromUri(personId, uri)
 
@@ -357,6 +378,18 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
     fun saveGraphPosition(personId: String, x: Float, y: Float) {
         viewModelScope.launch {
             repository.saveGraphPosition(personId, graphMode.value, x, y)
+        }
+    }
+
+    fun clearGraphPositions(mode: GraphMode) {
+        viewModelScope.launch {
+            repository.clearGraphPositions(mode)
+        }
+    }
+
+    fun restoreGraphPositions(positions: List<GraphPositionEntity>) {
+        viewModelScope.launch {
+            repository.restoreGraphPositions(positions)
         }
     }
 
