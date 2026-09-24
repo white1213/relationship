@@ -38,6 +38,7 @@ import com.relationship.graph.data.local.GraphPositionEntity
 import com.relationship.graph.data.local.PersonEntity
 import com.relationship.graph.data.local.RelationTypeEntity
 import com.relationship.graph.data.local.RelationshipEntity
+import com.relationship.graph.data.inference.InferredRelationshipCandidate
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -69,6 +70,8 @@ fun GraphCanvas(
     mode: GraphMode,
     myPersonId: String?,
     graphPositions: List<GraphPositionEntity>,
+    inferenceCandidates: List<InferredRelationshipCandidate>,
+    showInferenceSuggestions: Boolean,
     highlightedPersonIds: Set<String>?,
     highlightedEdgeKeys: Set<String>?,
     selectedPersonId: String?,
@@ -77,6 +80,7 @@ fun GraphCanvas(
     onPersonSelected: (String) -> Unit,
     onPersonLongPress: (String) -> Unit,
     onBackgroundClick: () -> Unit,
+    onInferenceCandidateAction: (InferredRelationshipCandidate) -> Unit,
     onEdgeAction: (GraphEdgeGroup) -> Unit,
     onPersonMoved: (personId: String, x: Float, y: Float) -> Unit,
     modifier: Modifier = Modifier,
@@ -147,6 +151,19 @@ fun GraphCanvas(
         }.orEmpty()
     }
     val avatarImages = rememberAvatarImages(people)
+    val visibleInferenceCandidates = remember(
+        inferenceCandidates,
+        selectedPersonId,
+        showInferenceSuggestions,
+    ) {
+        if (!showInferenceSuggestions || selectedPersonId == null) {
+            emptyList()
+        } else {
+            inferenceCandidates.filter {
+                it.fromPersonId == selectedPersonId || it.toPersonId == selectedPersonId
+            }
+        }
+    }
     val viewportsByMode = remember { mutableStateMapOf<GraphMode, Viewport>() }
     var viewport by remember { mutableStateOf(Viewport()) }
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
@@ -202,10 +219,39 @@ fun GraphCanvas(
                     } else {
                         null
                     }
-                    val activeEdgeGroup = activeRoute
-                        ?.relationshipIds
-                        ?.firstOrNull()
-                        ?.let(relationshipToGroup::get)
+                    val activeCandidate = if (activeNodeId == null) {
+                        hitTestInferenceCandidate(
+                            click = down.position,
+                            candidates = visibleInferenceCandidates,
+                            positions = nodePositions,
+                            viewport = viewport,
+                            canvasSize = size,
+                        )
+                    } else {
+                        null
+                    }
+                    val routeDistance = activeRoute?.let {
+                        routeDistance(down.position, it, viewport, size)
+                    } ?: Float.MAX_VALUE
+                    val candidateDistance = activeCandidate?.let {
+                        candidateDistance(
+                            down.position,
+                            it,
+                            nodePositions,
+                            viewport,
+                            size,
+                        )
+                    } ?: Float.MAX_VALUE
+                    val useCandidateHit = activeCandidate != null &&
+                        candidateDistance <= routeDistance
+                    val activeEdgeGroup = if (useCandidateHit) {
+                        null
+                    } else {
+                        activeRoute
+                            ?.relationshipIds
+                            ?.firstOrNull()
+                            ?.let(relationshipToGroup::get)
+                    }
                     var moved = false
                     var longPressHandled = false
                     var lastCentroid = down.position
@@ -260,6 +306,10 @@ fun GraphCanvas(
                                         longPressHandled = true
                                         onPersonLongPress(activeNodeId!!)
                                     }
+                                    useCandidateHit -> {
+                                        longPressHandled = true
+                                        onInferenceCandidateAction(activeCandidate!!)
+                                    }
                                     activeEdgeGroup != null -> {
                                         longPressHandled = true
                                         onEdgeAction(activeEdgeGroup)
@@ -273,6 +323,7 @@ fun GraphCanvas(
                     if (!moved && !longPressHandled) {
                         when {
                             activeNodeId != null -> onPersonSelected(activeNodeId!!)
+                            useCandidateHit -> onInferenceCandidateAction(activeCandidate!!)
                             activeEdgeGroup != null -> onEdgeAction(activeEdgeGroup)
                             else -> onBackgroundClick()
                         }
@@ -310,6 +361,7 @@ fun GraphCanvas(
                     GraphRouteStyle.SPOUSE -> spouseColor
                     GraphRouteStyle.SIBLING -> siblingColor
                     GraphRouteStyle.SOCIAL -> socialRouteColor
+                    GraphRouteStyle.CONFIRMED_INFERENCE -> Color(0xFF79A6D2)
                 }.copy(alpha = if (isHighlighted) 0.82f else 0.2f)
                 val strokeWidth = if (isHighlighted) 2.8f else 1.6f
                 val pathEffect = when (route.style) {
@@ -341,6 +393,19 @@ fun GraphCanvas(
                         drawArrowHead(start = start, end = end, color = routeColor)
                     }
                 }
+            }
+
+            val inferencePathEffect = PathEffect.dashPathEffect(floatArrayOf(5f, 6f))
+            visibleInferenceCandidates.forEach { candidate ->
+                val start = nodePositions[candidate.fromPersonId] ?: return@forEach
+                val end = nodePositions[candidate.toPersonId] ?: return@forEach
+                drawLine(
+                    color = Color(0xFF8CA7C4).copy(alpha = 0.72f),
+                    start = start,
+                    end = end,
+                    strokeWidth = 2f,
+                    pathEffect = inferencePathEffect,
+                )
             }
 
             people.forEach { person ->
@@ -555,9 +620,18 @@ fun GraphCanvas(
                 }
                 val label = route.relationshipIds
                     .mapNotNull { relationshipToGroup[it] }
-                    .flatMap { it.relationTypes }
-                    .distinctBy { it.id }
-                    .joinToString("/") { it.name }
+                    .flatMap { group ->
+                        group.relationships.map { relationship ->
+                            relationship.labelOverride
+                                ?: group.relationTypes.firstOrNull {
+                                    it.id == relationship.relationTypeId
+                                }?.name
+                                .orEmpty()
+                        }
+                    }
+                    .filter(String::isNotBlank)
+                    .distinct()
+                    .joinToString("/")
                 if (label.isBlank()) return@forEach
                 val point = center + viewport.pan + route.labelPoint.toOffset() * viewport.zoom
                 val measured = textMeasurer.measure(
@@ -661,6 +735,48 @@ private fun hitTestRoute(
         } ?: Float.MAX_VALUE
         distance <= max(14f, 20f / viewport.zoom)
     }
+}
+
+private fun hitTestInferenceCandidate(
+    click: Offset,
+    candidates: List<InferredRelationshipCandidate>,
+    positions: Map<String, Offset>,
+    viewport: Viewport,
+    canvasSize: IntSize,
+): InferredRelationshipCandidate? = candidates
+    .minByOrNull {
+        candidateDistance(click, it, positions, viewport, canvasSize)
+    }
+    ?.takeIf {
+        candidateDistance(click, it, positions, viewport, canvasSize) <=
+            max(16f, 22f / viewport.zoom)
+    }
+
+private fun routeDistance(
+    click: Offset,
+    route: RoutedRelationship,
+    viewport: Viewport,
+    canvasSize: IntSize,
+): Float {
+    val center = Offset(canvasSize.width / 2f, canvasSize.height / 2f)
+    val world = (click - center - viewport.pan) / viewport.zoom
+    return route.segments.minOfOrNull {
+        distanceToSegment(world, it.start.toOffset(), it.end.toOffset())
+    } ?: Float.MAX_VALUE
+}
+
+private fun candidateDistance(
+    click: Offset,
+    candidate: InferredRelationshipCandidate,
+    positions: Map<String, Offset>,
+    viewport: Viewport,
+    canvasSize: IntSize,
+): Float {
+    val start = positions[candidate.fromPersonId] ?: return Float.MAX_VALUE
+    val end = positions[candidate.toPersonId] ?: return Float.MAX_VALUE
+    val center = Offset(canvasSize.width / 2f, canvasSize.height / 2f)
+    val world = (click - center - viewport.pan) / viewport.zoom
+    return distanceToSegment(world, start, end)
 }
 
 private fun distanceToSegment(point: Offset, start: Offset, end: Offset): Float {

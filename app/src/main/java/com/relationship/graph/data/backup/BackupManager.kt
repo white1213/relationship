@@ -8,6 +8,7 @@ import com.relationship.graph.data.GraphData
 import com.relationship.graph.data.RelationshipRepository
 import com.relationship.graph.data.local.GraphMode
 import com.relationship.graph.data.local.GraphPositionEntity
+import com.relationship.graph.data.local.InferenceDismissalEntity
 import com.relationship.graph.data.local.PersonEntity
 import com.relationship.graph.data.local.RelationTypeEntity
 import com.relationship.graph.data.local.RelationshipEntity
@@ -45,6 +46,7 @@ private data class BackupPayload(
     val relationTypes: List<RelationTypeEntity>,
     val relationships: List<RelationshipEntity>,
     val graphPositions: List<GraphPositionEntity>?,
+    val inferenceDismissals: List<InferenceDismissalEntity>?,
     val avatars: Map<String, String>,
     val settings: Map<String, String>,
 )
@@ -74,6 +76,7 @@ class BackupManager(
             relationTypes = data.relationTypes,
             relationships = data.relationships,
             graphPositions = data.graphPositions,
+            inferenceDismissals = data.inferenceDismissals,
             avatars = avatars,
             settings = emptyMap(),
         )
@@ -145,6 +148,8 @@ class BackupManager(
         val importedPositions = payload.graphPositions.orEmpty()
             .filter { it.personId in personIds }
             .filter { it.mode in GraphMode.entries }
+        val importedDismissals = payload.inferenceDismissals.orEmpty()
+            .filter { it.fromPersonId in personIds && it.toPersonId in personIds }
         GraphData(
             people = importedPeople,
             tags = payload.tags,
@@ -152,6 +157,7 @@ class BackupManager(
             relationTypes = payload.relationTypes,
             relationships = payload.relationships,
             graphPositions = importedPositions,
+            inferenceDismissals = importedDismissals,
         )
     }
 
@@ -172,6 +178,13 @@ class BackupManager(
         }
         require(payload.graphPositions.orEmpty().all { it.personId in personIds }) {
             "备份中存在无效的图谱位置"
+        }
+        require(
+            payload.inferenceDismissals.orEmpty().all {
+                it.fromPersonId in personIds && it.toPersonId in personIds
+            },
+        ) {
+            "备份中存在无效的推理忽略记录"
         }
     }
 
@@ -215,7 +228,7 @@ class BackupManager(
     companion object {
         const val MIN_BACKUP_PASSWORD_LENGTH = 6
         const val BACKUP_FORMAT_VERSION = 1
-        const val CURRENT_SCHEMA_VERSION = 2
+        const val CURRENT_SCHEMA_VERSION = 3
         const val MIME_TYPE = "application/octet-stream"
         private const val KDF_ALGORITHM = "PBKDF2WithHmacSHA256"
         private const val CIPHER_TRANSFORMATION = "AES/GCM/NoPadding"

@@ -10,11 +10,16 @@ import com.relationship.graph.data.local.PersonEntity
 import com.relationship.graph.data.local.PersonTagEntity
 import com.relationship.graph.data.local.GraphMode
 import com.relationship.graph.data.local.GraphPositionEntity
+import com.relationship.graph.data.local.Gender
+import com.relationship.graph.data.local.InferenceDismissalEntity
 import com.relationship.graph.data.local.RelationCategory
 import com.relationship.graph.data.local.RelationDirection
 import com.relationship.graph.data.local.RelationTypeEntity
+import com.relationship.graph.data.local.RelationshipSource
 import com.relationship.graph.data.local.RelationshipEntity
 import com.relationship.graph.data.local.TagEntity
+import com.relationship.graph.data.inference.InferenceEngine
+import com.relationship.graph.data.inference.InferredRelationshipCandidate
 import java.util.UUID
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +27,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -34,6 +40,9 @@ data class AppUiState(
     val relationTypes: List<RelationTypeEntity> = emptyList(),
     val relationships: List<RelationshipEntity> = emptyList(),
     val graphPositions: List<GraphPositionEntity> = emptyList(),
+    val inferenceDismissals: List<InferenceDismissalEntity> = emptyList(),
+    val inferredCandidates: List<InferredRelationshipCandidate> = emptyList(),
+    val showInferenceSuggestions: Boolean = true,
     val graphMode: GraphMode = GraphMode.FAMILY,
     val myPersonId: String? = null,
     val searchQuery: String = "",
@@ -57,6 +66,11 @@ data class AppUiState(
 
     fun relationshipsForPerson(personId: String): List<RelationshipEntity> =
         relationships.filter { it.fromPersonId == personId || it.toPersonId == personId }
+
+    fun inferenceCandidatesFor(personId: String): List<InferredRelationshipCandidate> =
+        inferredCandidates.filter {
+            it.fromPersonId == personId || it.toPersonId == personId
+        }
 }
 
 class RelationshipViewModel(application: Application) : AndroidViewModel(application) {
@@ -70,6 +84,20 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
     private val messageChannel = Channel<String>(Channel.BUFFERED)
     val messages = messageChannel.receiveAsFlow()
 
+    private val inferenceCandidatesFlow = combine(
+        repository.people,
+        repository.relationships,
+        repository.relationTypes,
+        repository.inferenceDismissals,
+    ) { people, relationships, relationTypes, dismissals ->
+        InferenceEngine.infer(
+            people = people,
+            relationships = relationships,
+            relationTypes = relationTypes,
+            dismissals = dismissals,
+        )
+    }.flowOn(kotlinx.coroutines.Dispatchers.Default)
+
     val uiState: StateFlow<AppUiState> = combine(
         repository.people,
         repository.tagEntities,
@@ -77,10 +105,13 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
         repository.relationTypes,
         repository.relationships,
         repository.graphPositions,
+        repository.inferenceDismissals,
+        app.container.graphPreferencesStore.showInferenceSuggestions,
         graphMode,
         app.container.graphPreferencesStore.myPersonId,
         searchQuery,
         selectedCategory,
+        inferenceCandidatesFlow,
     ) { values ->
         @Suppress("UNCHECKED_CAST")
         AppUiState(
@@ -91,12 +122,16 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
             relationTypes = values[3] as List<RelationTypeEntity>,
             relationships = values[4] as List<RelationshipEntity>,
             graphPositions = values[5] as List<GraphPositionEntity>,
-            graphMode = values[6] as GraphMode,
-            myPersonId = values[7] as String?,
-            searchQuery = values[8] as String,
-            selectedCategory = values[9] as RelationCategory?,
+            inferenceDismissals = values[6] as List<InferenceDismissalEntity>,
+            showInferenceSuggestions = values[7] as Boolean,
+            graphMode = values[8] as GraphMode,
+            myPersonId = values[9] as String?,
+            searchQuery = values[10] as String,
+            selectedCategory = values[11] as RelationCategory?,
+            inferredCandidates = values[12] as List<InferredRelationshipCandidate>,
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppUiState())
+    }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppUiState())
 
     init {
         viewModelScope.launch {
@@ -138,6 +173,7 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
     fun savePerson(
         id: String,
         name: String,
+        gender: Gender,
         avatarPath: String?,
         phone: String,
         birthday: String,
@@ -156,6 +192,7 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
                 person = PersonEntity(
                     id = id,
                     name = name.trim(),
+                    gender = gender,
                     avatarPath = avatarPath,
                     phone = phone.trim(),
                     birthday = birthday.trim(),
@@ -203,6 +240,17 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
                     fromPersonId = fromPersonId,
                     toPersonId = toPersonId,
                     relationTypeId = relationTypeId,
+                    source = existing?.source ?: RelationshipSource.MANUAL,
+                    labelOverride = if (existing?.relationTypeId == relationTypeId) {
+                        existing.labelOverride
+                    } else {
+                        null
+                    },
+                    inverseLabelOverride = if (existing?.relationTypeId == relationTypeId) {
+                        existing.inverseLabelOverride
+                    } else {
+                        null
+                    },
                     note = note.trim(),
                     createdAt = existing?.createdAt ?: now,
                     updatedAt = now,
@@ -241,6 +289,60 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
             runCatching { repository.saveRelationType(type) }
                 .onSuccess { sendMessage("自定义关系已创建") }
                 .onFailure { sendMessage("关系名称已存在") }
+        }
+    }
+
+    fun confirmInference(candidate: InferredRelationshipCandidate) {
+        val alreadyExists = uiState.value.relationships.any {
+            it.relationTypeId == candidate.relationTypeId &&
+                setOf(it.fromPersonId, it.toPersonId) ==
+                setOf(candidate.fromPersonId, candidate.toPersonId)
+        }
+        if (alreadyExists) {
+            sendMessage("该关系已经存在")
+            return
+        }
+        viewModelScope.launch {
+            runCatching {
+                repository.clearInferenceDismissal(
+                    candidate.fromPersonId,
+                    candidate.toPersonId,
+                    candidate.rule.id,
+                )
+                repository.saveRelationship(
+                    RelationshipEntity(
+                        id = UUID.randomUUID().toString(),
+                        fromPersonId = candidate.fromPersonId,
+                        toPersonId = candidate.toPersonId,
+                        relationTypeId = candidate.relationTypeId,
+                        source = RelationshipSource.CONFIRMED_INFERENCE,
+                        labelOverride = candidate.labelForFrom,
+                        inverseLabelOverride = candidate.labelForTo,
+                    ),
+                )
+            }
+                .onSuccess { sendMessage("已添加推导关系") }
+                .onFailure { sendMessage(it.message ?: "添加失败") }
+        }
+    }
+
+    fun dismissInference(candidate: InferredRelationshipCandidate) {
+        viewModelScope.launch {
+            repository.dismissInference(
+                InferenceDismissalEntity(
+                    fromPersonId = candidate.fromPersonId,
+                    toPersonId = candidate.toPersonId,
+                    ruleId = candidate.rule.id,
+                    evidenceFingerprint = candidate.evidenceFingerprint,
+                ),
+            )
+            sendMessage("已忽略该候选关系")
+        }
+    }
+
+    fun setShowInferenceSuggestions(enabled: Boolean) {
+        viewModelScope.launch {
+            app.container.graphPreferencesStore.setShowInferenceSuggestions(enabled)
         }
     }
 

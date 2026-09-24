@@ -29,6 +29,19 @@ class Converters {
 
     @TypeConverter
     fun stringToGraphMode(value: String): GraphMode = GraphMode.valueOf(value)
+
+    @TypeConverter
+    fun genderToString(value: Gender): String = value.name
+
+    @TypeConverter
+    fun stringToGender(value: String): Gender = Gender.valueOf(value)
+
+    @TypeConverter
+    fun relationshipSourceToString(value: RelationshipSource): String = value.name
+
+    @TypeConverter
+    fun stringToRelationshipSource(value: String): RelationshipSource =
+        RelationshipSource.valueOf(value)
 }
 
 @Database(
@@ -39,8 +52,9 @@ class Converters {
         RelationTypeEntity::class,
         RelationshipEntity::class,
         GraphPositionEntity::class,
+        InferenceDismissalEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -58,7 +72,7 @@ abstract class AppDatabase : RoomDatabase() {
                 "relationship-graph.db",
             )
                 .openHelperFactory(factory)
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build()
         }
 
@@ -94,6 +108,53 @@ abstract class AppDatabase : RoomDatabase() {
                 database.execSQL("ALTER TABLE `people` DROP COLUMN `graphX`")
                 database.execSQL("ALTER TABLE `people` DROP COLUMN `graphY`")
                 database.execSQL("ALTER TABLE `people` DROP COLUMN `positionInitialized`")
+            }
+        }
+
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE `people` ADD COLUMN `gender` TEXT NOT NULL " +
+                        "DEFAULT 'UNSPECIFIED'",
+                )
+                database.execSQL(
+                    "ALTER TABLE `relation_types` ADD COLUMN `isInferenceOnly` " +
+                        "INTEGER NOT NULL DEFAULT 0",
+                )
+                database.execSQL(
+                    "ALTER TABLE `relationships` ADD COLUMN `source` TEXT NOT NULL " +
+                        "DEFAULT 'MANUAL'",
+                )
+                database.execSQL(
+                    "ALTER TABLE `relationships` ADD COLUMN `labelOverride` TEXT",
+                )
+                database.execSQL(
+                    "ALTER TABLE `relationships` ADD COLUMN `inverseLabelOverride` TEXT",
+                )
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `inference_dismissals` (
+                        `fromPersonId` TEXT NOT NULL,
+                        `toPersonId` TEXT NOT NULL,
+                        `ruleId` TEXT NOT NULL,
+                        `evidenceFingerprint` TEXT NOT NULL,
+                        `dismissedAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`fromPersonId`, `toPersonId`, `ruleId`),
+                        FOREIGN KEY(`fromPersonId`) REFERENCES `people`(`id`)
+                            ON UPDATE NO ACTION ON DELETE CASCADE,
+                        FOREIGN KEY(`toPersonId`) REFERENCES `people`(`id`)
+                            ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_inference_dismissals_fromPersonId` " +
+                        "ON `inference_dismissals` (`fromPersonId`)",
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_inference_dismissals_toPersonId` " +
+                        "ON `inference_dismissals` (`toPersonId`)",
+                )
             }
         }
     }

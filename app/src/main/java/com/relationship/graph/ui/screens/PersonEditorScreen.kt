@@ -23,8 +23,10 @@ import androidx.compose.material.icons.rounded.Collections
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -41,6 +43,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.relationship.graph.data.local.PersonEntity
+import com.relationship.graph.data.local.Gender
 import com.relationship.graph.ui.AppUiState
 import com.relationship.graph.ui.RelationshipViewModel
 import com.relationship.graph.ui.components.AppTopBar
@@ -61,6 +64,9 @@ fun PersonEditorScreen(
     val scope = rememberCoroutineScope()
 
     var name by rememberSaveable(existing?.id) { mutableStateOf(existing?.name.orEmpty()) }
+    var gender by rememberSaveable(existing?.id) {
+        mutableStateOf(existing?.gender ?: Gender.UNSPECIFIED)
+    }
     var phone by rememberSaveable(existing?.id) { mutableStateOf(existing?.phone.orEmpty()) }
     var birthday by rememberSaveable(existing?.id) { mutableStateOf(existing?.birthday.orEmpty()) }
     var address by rememberSaveable(existing?.id) { mutableStateOf(existing?.address.orEmpty()) }
@@ -180,6 +186,18 @@ fun PersonEditorScreen(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("性别", style = MaterialTheme.typography.labelLarge)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Gender.entries.forEach { value ->
+                        FilterChip(
+                            selected = gender == value,
+                            onClick = { gender = value },
+                            label = { Text(value.displayName()) },
+                        )
+                    }
+                }
+            }
             OutlinedTextField(
                 value = phone,
                 onValueChange = { phone = it },
@@ -221,6 +239,7 @@ fun PersonEditorScreen(
                     viewModel.savePerson(
                         id = id,
                         name = name,
+                        gender = gender,
                         avatarPath = avatarPath,
                         phone = phone,
                         birthday = birthday,
@@ -241,4 +260,10 @@ fun PersonEditorScreen(
             Spacer(Modifier.height(32.dp))
         }
     }
+}
+
+private fun Gender.displayName(): String = when (this) {
+    Gender.UNSPECIFIED -> "未设置"
+    Gender.MALE -> "男"
+    Gender.FEMALE -> "女"
 }

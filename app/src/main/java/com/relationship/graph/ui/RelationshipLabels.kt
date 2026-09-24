@@ -9,11 +9,19 @@ fun relationshipLabelForPerson(
     type: RelationTypeEntity,
     personId: String,
 ): String {
-    if (type.direction == RelationDirection.BIDIRECTIONAL) return type.name
+    if (type.direction == RelationDirection.BIDIRECTIONAL) {
+        return if (relationship.fromPersonId == personId) {
+            relationship.labelOverride ?: type.name
+        } else {
+            relationship.inverseLabelOverride
+                ?: relationship.labelOverride
+                ?: type.name
+        }
+    }
     return if (relationship.fromPersonId == personId) {
-        type.name
+        relationship.labelOverride ?: type.name
     } else {
-        type.inverseName ?: type.name
+        relationship.inverseLabelOverride ?: type.inverseName ?: type.name
     }
 }
 
@@ -23,7 +31,7 @@ fun relationshipSentence(
     fromName: String,
     toName: String,
 ): String = when (type.direction) {
-    RelationDirection.BIDIRECTIONAL -> "$fromName 与 $toName：${type.name}"
+    RelationDirection.BIDIRECTIONAL -> "$fromName 与 $toName：${relationship.labelOverride ?: type.name}"
     RelationDirection.DIRECTED ->
-        "$fromName 是 $toName 的${type.name}"
+        "$fromName 是 $toName 的${relationship.labelOverride ?: type.name}"
 }

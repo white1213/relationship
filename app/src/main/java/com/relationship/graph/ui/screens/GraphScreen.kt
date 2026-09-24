@@ -29,6 +29,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
@@ -52,6 +53,8 @@ import com.relationship.graph.data.local.RelationCategory
 import com.relationship.graph.data.local.GraphMode
 import com.relationship.graph.data.local.RelationTypeEntity
 import com.relationship.graph.data.local.RelationshipEntity
+import com.relationship.graph.data.inference.InferredRelationshipCandidate
+import com.relationship.graph.data.inference.InferenceConfidence
 import com.relationship.graph.ui.AppUiState
 import com.relationship.graph.ui.RelationshipViewModel
 import com.relationship.graph.ui.components.AppTopBar
@@ -85,6 +88,7 @@ fun GraphScreen(
     var focusScope by rememberSaveable { mutableStateOf<GraphFocusScope?>(null) }
     var centerOnPersonId by rememberSaveable { mutableStateOf<String?>(null) }
     var branchDialogPersonId by rememberSaveable { mutableStateOf<String?>(null) }
+    var inferenceCandidateDialog by remember { mutableStateOf<InferredRelationshipCandidate?>(null) }
     var showLegend by rememberSaveable { mutableStateOf(false) }
 
     val modeRelationships = remember(
@@ -317,6 +321,12 @@ fun GraphScreen(
                         mode = state.graphMode,
                         myPersonId = state.myPersonId,
                         graphPositions = state.graphPositions,
+                        inferenceCandidates = if (state.graphMode == GraphMode.SOCIAL) {
+                            emptyList()
+                        } else {
+                            state.inferredCandidates
+                        },
+                        showInferenceSuggestions = state.showInferenceSuggestions,
                         highlightedPersonIds = highlightedPeople,
                         highlightedEdgeKeys = highlightedEdges,
                         selectedPersonId = selectedPersonId,
@@ -335,6 +345,9 @@ fun GraphScreen(
                             focusPersonId = null
                             focusScope = null
                             centerOnPersonId = null
+                        },
+                        onInferenceCandidateAction = {
+                            inferenceCandidateDialog = it
                         },
                         onEdgeAction = {
                             selectedPersonId = null
@@ -543,7 +556,67 @@ fun GraphScreen(
     }
 
     if (showLegend) {
-        GraphLegendDialog(onDismiss = { showLegend = false })
+        GraphLegendDialog(
+            showInferenceSuggestions = state.showInferenceSuggestions,
+            onShowInferenceSuggestionsChange = viewModel::setShowInferenceSuggestions,
+            onDismiss = { showLegend = false },
+        )
+    }
+
+    inferenceCandidateDialog?.let { candidate ->
+        val perspectivePersonId = selectedPersonId ?: candidate.toPersonId
+        val otherPersonId = if (candidate.fromPersonId == perspectivePersonId) {
+            candidate.toPersonId
+        } else {
+            candidate.fromPersonId
+        }
+        val perspective = state.person(perspectivePersonId)
+        val other = state.person(otherPersonId)
+        AlertDialog(
+            onDismissRequest = { inferenceCandidateDialog = null },
+            title = {
+                Text(
+                    "${other?.name.orEmpty()} · ${candidate.labelFor(perspectivePersonId)}",
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "${perspective?.name.orEmpty()} → ${candidate.reason} → " +
+                            other?.name.orEmpty(),
+                    )
+                    Text(
+                        text = candidate.confidence.displayName(),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.confirmInference(candidate)
+                        inferenceCandidateDialog = null
+                    },
+                ) {
+                    Text("添加关系")
+                }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(
+                        onClick = {
+                            viewModel.dismissInference(candidate)
+                            inferenceCandidateDialog = null
+                        },
+                    ) {
+                        Text("忽略")
+                    }
+                    TextButton(onClick = { inferenceCandidateDialog = null }) {
+                        Text("取消")
+                    }
+                }
+            },
+        )
     }
 }
 
@@ -692,7 +765,11 @@ private fun GraphMode.displayName(): String = when (this) {
 }
 
 @Composable
-private fun GraphLegendDialog(onDismiss: () -> Unit) {
+private fun GraphLegendDialog(
+    showInferenceSuggestions: Boolean,
+    onShowInferenceSuggestionsChange: (Boolean) -> Unit,
+    onDismiss: () -> Unit,
+) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("图例") },
@@ -720,12 +797,36 @@ private fun GraphLegendDialog(onDismiss: () -> Unit) {
                 LegendLineRow("配偶 / 伴侣", Color(0xFFD35F78), doubleLine = true, dashed = false)
                 LegendLineRow("兄弟姐妹", Color(0xFF5A8FD6), doubleLine = false, dashed = true)
                 LegendLineRow("社交关系", Color(0xFF7A8796), doubleLine = false, dashed = true)
+                LegendLineRow("候选亲属", Color(0xFF8CA7C4), doubleLine = false, dashed = true)
+                LegendLineRow(
+                    "已确认推导关系",
+                    Color(0xFF79A6D2),
+                    doubleLine = false,
+                    dashed = false,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("显示候选亲属")
+                    Switch(
+                        checked = showInferenceSuggestions,
+                        onCheckedChange = onShowInferenceSuggestionsChange,
+                    )
+                }
             }
         },
         confirmButton = {
             TextButton(onClick = onDismiss) { Text("关闭") }
         },
     )
+}
+
+private fun InferenceConfidence.displayName(): String = when (this) {
+    InferenceConfidence.HIGH -> "可信度高"
+    InferenceConfidence.MEDIUM_HIGH -> "可信度中高"
+    InferenceConfidence.MEDIUM -> "可信度中等"
 }
 
 @Composable

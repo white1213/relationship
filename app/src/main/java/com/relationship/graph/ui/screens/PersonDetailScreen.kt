@@ -37,6 +37,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.relationship.graph.data.local.PersonEntity
 import com.relationship.graph.data.local.RelationshipEntity
+import com.relationship.graph.data.inference.InferenceConfidence
+import com.relationship.graph.data.inference.InferredRelationshipCandidate
 import com.relationship.graph.ui.AppUiState
 import com.relationship.graph.ui.components.AppTopBar
 import com.relationship.graph.ui.components.EmptyState
@@ -51,6 +53,8 @@ fun PersonDetailScreen(
     onEdit: () -> Unit,
     onAddRelationship: () -> Unit,
     onEditRelationship: (String) -> Unit,
+    onConfirmInference: (InferredRelationshipCandidate) -> Unit,
+    onDismissInference: (InferredRelationshipCandidate) -> Unit,
     onDeletePerson: (PersonEntity) -> Unit,
     onDeleteRelationship: (RelationshipEntity) -> Unit,
 ) {
@@ -209,6 +213,82 @@ fun PersonDetailScreen(
                 }
             }
 
+            val inferredCandidates = state.inferenceCandidatesFor(person.id)
+            if (inferredCandidates.isNotEmpty()) {
+                HorizontalDivider()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("可能的亲属关系", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        text = "${inferredCandidates.size} 条",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                inferredCandidates.forEach { candidate ->
+                    val otherPersonId = if (candidate.fromPersonId == person.id) {
+                        candidate.toPersonId
+                    } else {
+                        candidate.fromPersonId
+                    }
+                    val otherPerson = state.person(otherPersonId)
+                    if (otherPerson != null) {
+                        Card(modifier = Modifier.fillMaxWidth()) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                ) {
+                                    PersonAvatar(person = otherPerson, size = 44.dp)
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = otherPerson.name,
+                                            style = MaterialTheme.typography.titleMedium,
+                                        )
+                                        Text(
+                                            text = candidate.labelFor(person.id),
+                                            color = MaterialTheme.colorScheme.primary,
+                                            style = MaterialTheme.typography.labelLarge,
+                                        )
+                                    }
+                                    Text(
+                                        text = candidate.confidence.displayName(),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                Text(
+                                    text = "推导依据：${candidate.reason}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End,
+                                ) {
+                                    TextButton(onClick = { onDismissInference(candidate) }) {
+                                        Text("忽略")
+                                    }
+                                    OutlinedButton(
+                                        onClick = { onConfirmInference(candidate) },
+                                    ) {
+                                        Text("添加关系")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             Spacer(Modifier.height(8.dp))
             Button(
                 onClick = { showDeletePerson = true },
@@ -276,6 +356,12 @@ fun PersonDetailScreen(
             },
         )
     }
+}
+
+private fun InferenceConfidence.displayName(): String = when (this) {
+    InferenceConfidence.HIGH -> "可信度高"
+    InferenceConfidence.MEDIUM_HIGH -> "可信度中高"
+    InferenceConfidence.MEDIUM -> "可信度中等"
 }
 
 @Composable

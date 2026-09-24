@@ -1,0 +1,198 @@
+package com.relationship.graph.data.inference
+
+import com.relationship.graph.data.local.Gender
+import com.relationship.graph.data.local.InferenceDismissalEntity
+import com.relationship.graph.data.local.InferenceRelationTypeIds
+import com.relationship.graph.data.local.PersonEntity
+import com.relationship.graph.data.local.PresetRelationTypes
+import com.relationship.graph.data.local.RelationshipEntity
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class InferenceEngineTest {
+    private val parentChild = "preset_parent_child"
+    private val spouse = "preset_spouse"
+    private val sibling = "preset_sibling"
+
+    @Test
+    fun grandparentsUseGenderAndParentSideLabels() {
+        val people = listOf(
+            person("grandfather", "爷爷", Gender.MALE),
+            person("grandmother", "奶奶", Gender.FEMALE),
+            person("parent", "父亲", Gender.MALE),
+            person("child", "孩子", Gender.FEMALE),
+        )
+        val relationships = listOf(
+            relationship("edge1", "grandfather", "parent", parentChild),
+            relationship("edge2", "grandmother", "parent", parentChild),
+            relationship("edge3", "parent", "child", parentChild),
+        )
+
+        val candidates = infer(people, relationships)
+        val grandfather = candidates.single {
+            it.fromPersonId == "grandfather" && it.toPersonId == "child"
+        }
+        val grandmother = candidates.single {
+            it.fromPersonId == "grandmother" && it.toPersonId == "child"
+        }
+
+        assertEquals("爷爷", grandfather.labelForFrom)
+        assertEquals("孙女", grandfather.labelForTo)
+        assertEquals("奶奶", grandmother.labelForFrom)
+        assertEquals(InferenceConfidence.HIGH, grandfather.confidence)
+    }
+
+    @Test
+    fun sharedParentInfersSiblingButDirectSiblingSuppressesCandidate() {
+        val people = listOf(
+            person("parent", "父母"),
+            person("older", "老大", Gender.MALE, "1990-01-01"),
+            person("younger", "老二", Gender.FEMALE, "1995-01-01"),
+        )
+        val parentRelationships = listOf(
+            relationship("edge1", "parent", "older", parentChild),
+            relationship("edge2", "parent", "younger", parentChild),
+        )
+
+        val inferred = infer(people, parentRelationships)
+            .single { setOf(it.fromPersonId, it.toPersonId) == setOf("older", "younger") }
+        assertTrue(inferred.labelForFrom in setOf("哥哥", "姐姐"))
+        assertTrue(inferred.labelForTo in setOf("弟弟", "妹妹"))
+
+        val withDirectSibling = infer(
+            people,
+            parentRelationships + relationship("direct", "older", "younger", sibling),
+        )
+        assertNull(
+            withDirectSibling.firstOrNull {
+                setOf(it.fromPersonId, it.toPersonId) == setOf("older", "younger")
+            },
+        )
+    }
+
+    @Test
+    fun infersAuntAndCousinRelationships() {
+        val people = listOf(
+            person("grandparent", "祖辈"),
+            person("parent", "父亲", Gender.MALE),
+            person("aunt", "姑姑", Gender.FEMALE),
+            person("child", "孩子"),
+            person("cousin", "表妹", Gender.FEMALE, "2000-01-01"),
+        )
+        val relationships = listOf(
+            relationship("edge1", "grandparent", "parent", parentChild),
+            relationship("edge2", "grandparent", "aunt", parentChild),
+            relationship("edge3", "parent", "child", parentChild),
+            relationship("edge4", "aunt", "cousin", parentChild),
+        )
+
+        val candidates = infer(people, relationships)
+
+        assertTrue(
+            candidates.any {
+                it.rule == InferenceRule.AUNT_UNCLE &&
+                    it.fromPersonId == "aunt" &&
+                    it.toPersonId == "child" &&
+                    it.labelForFrom == "姑母"
+            },
+        )
+        assertTrue(
+            candidates.any {
+                it.rule == InferenceRule.COUSIN &&
+                    setOf(it.fromPersonId, it.toPersonId) == setOf("child", "cousin")
+            },
+        )
+    }
+
+    @Test
+    fun infersParentsInLawAndChildInLawLabels() {
+        val people = listOf(
+            person("husband", "丈夫", Gender.MALE),
+            person("wife", "妻子", Gender.FEMALE),
+            person("wifeFather", "妻子父亲", Gender.MALE),
+        )
+        val relationships = listOf(
+            relationship("marriage", "husband", "wife", spouse),
+            relationship("parent", "wifeFather", "wife", parentChild),
+        )
+
+        val candidate = infer(people, relationships).single {
+            it.fromPersonId == "wifeFather" && it.toPersonId == "husband"
+        }
+
+        assertEquals(InferenceRelationTypeIds.IN_LAW, candidate.relationTypeId)
+        assertEquals("岳父", candidate.labelForFrom)
+        assertEquals("女婿", candidate.labelForTo)
+    }
+
+    @Test
+    fun dismissedCandidateStaysHiddenWhileEvidenceFingerprintMatches() {
+        val people = listOf(
+            person("parent", "父母"),
+            person("first", "老大"),
+            person("second", "老二"),
+        )
+        val relationships = listOf(
+            relationship("edge1", "parent", "first", parentChild),
+            relationship("edge2", "parent", "second", parentChild),
+        )
+        val candidate = infer(people, relationships).first {
+            setOf(it.fromPersonId, it.toPersonId) == setOf("first", "second")
+        }
+        val dismissal = InferenceDismissalEntity(
+            fromPersonId = candidate.fromPersonId,
+            toPersonId = candidate.toPersonId,
+            ruleId = candidate.rule.id,
+            evidenceFingerprint = candidate.evidenceFingerprint,
+        )
+
+        val afterDismissal = InferenceEngine.infer(
+            people = people,
+            relationships = relationships,
+            relationTypes = PresetRelationTypes.all,
+            dismissals = listOf(dismissal),
+        )
+
+        assertTrue(
+            afterDismissal.none {
+                setOf(it.fromPersonId, it.toPersonId) == setOf("first", "second")
+            },
+        )
+    }
+
+    private fun infer(
+        people: List<PersonEntity>,
+        relationships: List<RelationshipEntity>,
+    ): List<InferredRelationshipCandidate> = InferenceEngine.infer(
+        people = people,
+        relationships = relationships,
+        relationTypes = PresetRelationTypes.all,
+        dismissals = emptyList(),
+    )
+
+    private fun person(
+        id: String,
+        name: String,
+        gender: Gender = Gender.UNSPECIFIED,
+        birthday: String = "",
+    ) = PersonEntity(
+        id = id,
+        name = name,
+        gender = gender,
+        birthday = birthday,
+    )
+
+    private fun relationship(
+        id: String,
+        from: String,
+        to: String,
+        typeId: String,
+    ) = RelationshipEntity(
+        id = id,
+        fromPersonId = from,
+        toPersonId = to,
+        relationTypeId = typeId,
+    )
+}

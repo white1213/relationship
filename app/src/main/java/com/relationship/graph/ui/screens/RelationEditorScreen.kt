@@ -65,7 +65,10 @@ fun RelationEditorScreen(
         mutableStateOf(defaultSecond.orEmpty())
     }
     var relationTypeId by rememberSaveable(existing?.id) {
-        mutableStateOf(existing?.relationTypeId ?: state.relationTypes.firstOrNull()?.id.orEmpty())
+        mutableStateOf(
+            existing?.relationTypeId
+                ?: state.relationTypes.firstOrNull { !it.isInferenceOnly }?.id.orEmpty(),
+        )
     }
     var note by rememberSaveable(existing?.id) { mutableStateOf(existing?.note.orEmpty()) }
     var forwardFromFirst by rememberSaveable(existing?.id) {
@@ -79,10 +82,13 @@ fun RelationEditorScreen(
     val firstPerson = state.person(firstPersonId)
     val secondPerson = state.person(secondPersonId)
     val relationType = state.relationType(relationTypeId)
+    val selectableRelationTypes = state.relationTypes.filter {
+        !it.isInferenceOnly || it.id == existing?.relationTypeId
+    }
 
-    LaunchedEffect(state.relationTypes) {
+    LaunchedEffect(selectableRelationTypes) {
         if (relationTypeId.isBlank()) {
-            state.relationTypes.firstOrNull()?.let { relationTypeId = it.id }
+            selectableRelationTypes.firstOrNull()?.let { relationTypeId = it.id }
         }
     }
 
@@ -162,7 +168,7 @@ fun RelationEditorScreen(
                         expanded = typeMenu,
                         onDismissRequest = { typeMenu = false },
                     ) {
-                        state.relationTypes.forEach { type ->
+                        selectableRelationTypes.forEach { type ->
                             DropdownMenuItem(
                                 text = {
                                     Text(

@@ -5,6 +5,7 @@ import com.relationship.graph.data.local.PersonEntity
 import com.relationship.graph.data.local.RelationCategory
 import com.relationship.graph.data.local.RelationDirection
 import com.relationship.graph.data.local.RelationTypeEntity
+import com.relationship.graph.data.local.RelationshipSource
 import com.relationship.graph.data.local.RelationshipEntity
 import kotlin.math.PI
 import kotlin.math.abs
@@ -31,6 +32,7 @@ enum class GraphRouteStyle {
     SPOUSE,
     SIBLING,
     SOCIAL,
+    CONFIRMED_INFERENCE,
 }
 
 data class RouteSegment(
@@ -294,6 +296,14 @@ object GraphLayoutEngine {
         val routes = mutableListOf<RoutedRelationship>()
         routes += buildSimpleRoutes(spouseEdges, positions, GraphRouteStyle.SPOUSE)
         routes += buildSimpleRoutes(siblingEdges, positions, GraphRouteStyle.SIBLING)
+        routes += buildSimpleRoutes(
+            relationships.filter {
+                typeById[it.relationTypeId]?.isInferenceOnly == true &&
+                    it.source == RelationshipSource.CONFIRMED_INFERENCE
+            },
+            positions,
+            GraphRouteStyle.CONFIRMED_INFERENCE,
+        )
 
         val relationshipByPair = relationships
             .filter { isParentChild(typeById[it.relationTypeId]) }
@@ -498,12 +508,7 @@ object GraphLayoutEngine {
         }
 
     private fun isParentChild(type: RelationTypeEntity?): Boolean =
-        type?.id == "preset_parent_child" ||
-            (
-                type?.category == RelationCategory.FAMILY &&
-                    type.direction == RelationDirection.DIRECTED &&
-                    !type.inverseName.isNullOrBlank()
-                )
+        type?.id == "preset_parent_child"
 
     private fun isSpouse(type: RelationTypeEntity?): Boolean = type?.id == "preset_spouse"
 

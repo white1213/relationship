@@ -167,6 +167,8 @@ private fun MainNavigation(
                     onEditRelationship = { relationshipId ->
                         navController.navigate(Routes.relationEditor(relationshipId = relationshipId))
                     },
+                    onConfirmInference = viewModel::confirmInference,
+                    onDismissInference = viewModel::dismissInference,
                     onDeletePerson = viewModel::deletePerson,
                     onDeleteRelationship = viewModel::deleteRelationship,
                 )

@@ -30,6 +30,9 @@ interface RelationshipDao {
     @Query("SELECT * FROM graph_positions")
     fun observeGraphPositions(): Flow<List<GraphPositionEntity>>
 
+    @Query("SELECT * FROM inference_dismissals")
+    fun observeInferenceDismissals(): Flow<List<InferenceDismissalEntity>>
+
     @Query("SELECT * FROM people")
     suspend fun getAllPeople(): List<PersonEntity>
 
@@ -47,6 +50,9 @@ interface RelationshipDao {
 
     @Query("SELECT * FROM graph_positions")
     suspend fun getAllGraphPositions(): List<GraphPositionEntity>
+
+    @Query("SELECT * FROM inference_dismissals")
+    suspend fun getAllInferenceDismissals(): List<InferenceDismissalEntity>
 
     @Query("SELECT COUNT(*) FROM relation_types")
     suspend fun relationTypeCount(): Int
@@ -99,6 +105,22 @@ interface RelationshipDao {
     @Upsert
     suspend fun upsertGraphPositions(positions: List<GraphPositionEntity>)
 
+    @Upsert
+    suspend fun upsertInferenceDismissal(dismissal: InferenceDismissalEntity)
+
+    @Upsert
+    suspend fun upsertInferenceDismissals(dismissals: List<InferenceDismissalEntity>)
+
+    @Query(
+        "DELETE FROM inference_dismissals WHERE fromPersonId = :fromPersonId " +
+            "AND toPersonId = :toPersonId AND ruleId = :ruleId",
+    )
+    suspend fun deleteInferenceDismissal(
+        fromPersonId: String,
+        toPersonId: String,
+        ruleId: String,
+    )
+
     @Delete
     suspend fun deleteRelationship(relationship: RelationshipEntity)
 
@@ -122,6 +144,9 @@ interface RelationshipDao {
 
     @Query("DELETE FROM graph_positions")
     suspend fun deleteAllGraphPositions()
+
+    @Query("DELETE FROM inference_dismissals")
+    suspend fun deleteAllInferenceDismissals()
 
     @Transaction
     suspend fun savePersonWithTags(
@@ -163,6 +188,7 @@ interface RelationshipDao {
         relationTypes: List<RelationTypeEntity>,
         relationships: List<RelationshipEntity>,
         graphPositions: List<GraphPositionEntity>,
+        inferenceDismissals: List<InferenceDismissalEntity>,
     ) {
         deleteAllRelationships()
         deleteAllPersonTags()
@@ -170,9 +196,11 @@ interface RelationshipDao {
         deleteAllTags()
         deleteAllRelationTypes()
         deleteAllGraphPositions()
+        deleteAllInferenceDismissals()
 
         upsertPeople(people)
         upsertGraphPositions(graphPositions)
+        upsertInferenceDismissals(inferenceDismissals)
         insertTags(tags)
         insertPersonTags(personTags)
         insertRelationTypes(relationTypes)

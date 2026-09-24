@@ -6,6 +6,7 @@ import android.net.Uri
 import com.relationship.graph.data.local.AppDatabase
 import com.relationship.graph.data.local.GraphMode
 import com.relationship.graph.data.local.GraphPositionEntity
+import com.relationship.graph.data.local.InferenceDismissalEntity
 import com.relationship.graph.data.local.PersonEntity
 import com.relationship.graph.data.local.PersonTagEntity
 import com.relationship.graph.data.local.PresetRelationTypes
@@ -26,6 +27,7 @@ data class GraphData(
     val relationTypes: List<RelationTypeEntity>,
     val relationships: List<RelationshipEntity>,
     val graphPositions: List<GraphPositionEntity>,
+    val inferenceDismissals: List<InferenceDismissalEntity>,
 )
 
 class RelationshipRepository(
@@ -40,11 +42,11 @@ class RelationshipRepository(
     val relationTypes: Flow<List<RelationTypeEntity>> = dao.observeRelationTypes()
     val relationships: Flow<List<RelationshipEntity>> = dao.observeRelationships()
     val graphPositions: Flow<List<GraphPositionEntity>> = dao.observeGraphPositions()
+    val inferenceDismissals: Flow<List<InferenceDismissalEntity>> =
+        dao.observeInferenceDismissals()
 
     suspend fun ensurePresetRelationTypes() {
-        if (dao.relationTypeCount() == 0) {
-            dao.insertRelationTypes(PresetRelationTypes.all)
-        }
+        dao.insertRelationTypes(PresetRelationTypes.all)
     }
 
     suspend fun getPerson(personId: String): PersonEntity? = dao.getPerson(personId)
@@ -102,6 +104,18 @@ class RelationshipRepository(
         dao.saveGraphPosition(personId, mode, x, y)
     }
 
+    suspend fun dismissInference(dismissal: InferenceDismissalEntity) {
+        dao.upsertInferenceDismissal(dismissal)
+    }
+
+    suspend fun clearInferenceDismissal(
+        fromPersonId: String,
+        toPersonId: String,
+        ruleId: String,
+    ) {
+        dao.deleteInferenceDismissal(fromPersonId, toPersonId, ruleId)
+    }
+
     suspend fun getGraphData(): GraphData = GraphData(
         people = dao.getAllPeople(),
         tags = dao.getAllTags(),
@@ -109,6 +123,7 @@ class RelationshipRepository(
         relationTypes = dao.getAllRelationTypes(),
         relationships = dao.getAllRelationships(),
         graphPositions = dao.getAllGraphPositions(),
+        inferenceDismissals = dao.getAllInferenceDismissals(),
     )
 
     suspend fun replaceAll(data: GraphData) {
@@ -119,6 +134,7 @@ class RelationshipRepository(
             relationTypes = data.relationTypes,
             relationships = data.relationships,
             graphPositions = data.graphPositions,
+            inferenceDismissals = data.inferenceDismissals,
         )
         cleanupUnusedAvatars(data.people.mapNotNull { it.avatarPath }.toSet())
     }
