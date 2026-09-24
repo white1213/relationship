@@ -2,6 +2,8 @@ package com.relationship.graph.ui.graph
 
 import com.relationship.graph.data.local.RelationTypeEntity
 import com.relationship.graph.data.local.RelationshipEntity
+import com.relationship.graph.data.FamilyRelationKind
+import com.relationship.graph.data.RelationshipSemantics
 
 enum class GraphFocusScope {
     RELATED,
@@ -23,11 +25,11 @@ object GraphFocusEngine {
         relationTypes: List<RelationTypeEntity>,
     ): GraphFocusResult {
         val typeById = relationTypes.associateBy { it.id }
-        val parentChildRelationships = relationships.filter {
-            isParentChild(typeById[it.relationTypeId])
+        val parentChildEdges = relationships.mapNotNull {
+            RelationshipSemantics.parentChildEdge(it, typeById[it.relationTypeId])
         }
         val spouseRelationships = relationships.filter {
-            isSpouse(typeById[it.relationTypeId])
+            RelationshipSemantics.kind(typeById[it.relationTypeId]) == FamilyRelationKind.SPOUSE
         }
 
         return when (scope) {
@@ -52,10 +54,10 @@ object GraphFocusEngine {
                 queue.add(anchorPersonId)
                 while (queue.isNotEmpty()) {
                     val current = queue.removeFirst()
-                    parentChildRelationships
-                        .filter { it.toPersonId == current }
-                        .forEach { relationship ->
-                            val parentId = relationship.fromPersonId
+                    parentChildEdges
+                        .filter { it.childPersonId == current }
+                        .forEach { edge ->
+                            val parentId = edge.parentPersonId
                             if (personIds.add(parentId)) queue.add(parentId)
                             spousesOf(parentId, spouseRelationships).forEach(personIds::add)
                         }
@@ -77,15 +79,15 @@ object GraphFocusEngine {
                 queue.add(anchorPersonId)
                 while (queue.isNotEmpty()) {
                     val current = queue.removeFirst()
-                    parentChildRelationships
-                        .filter { it.fromPersonId == current }
-                        .forEach { relationship ->
-                            val childId = relationship.toPersonId
+                    parentChildEdges
+                        .filter { it.parentPersonId == current }
+                        .forEach { edge ->
+                            val childId = edge.childPersonId
                             if (personIds.add(childId)) queue.add(childId)
                             personIds += spousesOf(childId, spouseRelationships)
-                            personIds += parentChildRelationships
-                                .filter { it.toPersonId == childId }
-                                .map { it.fromPersonId }
+                            personIds += parentChildEdges
+                                .filter { it.childPersonId == childId }
+                                .map { it.parentPersonId }
                         }
                 }
                 GraphFocusResult(
@@ -110,9 +112,4 @@ object GraphFocusEngine {
         }
     }.toSet()
 
-    private fun isParentChild(type: RelationTypeEntity?): Boolean =
-        type?.id == "preset_parent_child"
-
-    private fun isSpouse(type: RelationTypeEntity?): Boolean =
-        type?.id == "preset_spouse"
 }

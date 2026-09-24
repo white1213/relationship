@@ -5,6 +5,9 @@ import com.relationship.graph.data.local.InferenceDismissalEntity
 import com.relationship.graph.data.local.InferenceRelationTypeIds
 import com.relationship.graph.data.local.PersonEntity
 import com.relationship.graph.data.local.PresetRelationTypes
+import com.relationship.graph.data.local.RelationCategory
+import com.relationship.graph.data.local.RelationDirection
+import com.relationship.graph.data.local.RelationTypeEntity
 import com.relationship.graph.data.local.RelationshipEntity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -160,6 +163,69 @@ class InferenceEngineTest {
                 setOf(it.fromPersonId, it.toPersonId) == setOf("first", "second")
             },
         )
+    }
+
+    @Test
+    fun customSingleDirectionFatherRelationshipParticipatesInInference() {
+        val fatherType = RelationTypeEntity(
+            id = "custom_father",
+            name = "父亲",
+            inverseName = "子女",
+            category = RelationCategory.CUSTOM,
+            direction = RelationDirection.DIRECTED,
+        )
+        val people = listOf(
+            person("grandfather", "爷爷", Gender.MALE),
+            person("father", "父亲", Gender.MALE),
+            person("child", "孩子"),
+        )
+        val relationships = listOf(
+            relationship("edge1", "grandfather", "father", fatherType.id),
+            relationship("edge2", "father", "child", fatherType.id),
+        )
+
+        val candidate = InferenceEngine.infer(
+            people = people,
+            relationships = relationships,
+            relationTypes = PresetRelationTypes.all + fatherType,
+            dismissals = emptyList(),
+        ).single {
+            it.fromPersonId == "grandfather" && it.toPersonId == "child"
+        }
+
+        assertEquals("爷爷", candidate.labelForFrom)
+        assertEquals("孙辈", candidate.labelForTo)
+    }
+
+    @Test
+    fun customChildFirstDirectionIsNormalizedToParentToChild() {
+        val childType = RelationTypeEntity(
+            id = "custom_child",
+            name = "子女",
+            inverseName = "父母",
+            category = RelationCategory.CUSTOM,
+            direction = RelationDirection.DIRECTED,
+        )
+        val people = listOf(
+            person("grandfather", "爷爷", Gender.MALE),
+            person("father", "父亲", Gender.MALE),
+            person("child", "孩子"),
+        )
+        val relationships = listOf(
+            relationship("edge1", "father", "grandfather", childType.id),
+            relationship("edge2", "child", "father", childType.id),
+        )
+
+        val candidate = InferenceEngine.infer(
+            people = people,
+            relationships = relationships,
+            relationTypes = PresetRelationTypes.all + childType,
+            dismissals = emptyList(),
+        ).single {
+            it.fromPersonId == "grandfather" && it.toPersonId == "child"
+        }
+
+        assertEquals("爷爷", candidate.labelForFrom)
     }
 
     private fun infer(

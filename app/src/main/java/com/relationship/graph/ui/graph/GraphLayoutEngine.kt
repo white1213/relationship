@@ -1,9 +1,11 @@
 package com.relationship.graph.ui.graph
 
 import com.relationship.graph.data.local.GraphMode
+import com.relationship.graph.data.FamilyRelationKind
+import com.relationship.graph.data.ParentChildEdge
+import com.relationship.graph.data.RelationshipSemantics
 import com.relationship.graph.data.local.PersonEntity
 import com.relationship.graph.data.local.RelationCategory
-import com.relationship.graph.data.local.RelationDirection
 import com.relationship.graph.data.local.RelationTypeEntity
 import com.relationship.graph.data.local.RelationshipSource
 import com.relationship.graph.data.local.RelationshipEntity
@@ -81,7 +83,7 @@ object GraphLayoutEngine {
         val relevantRelationships = relationships.filter { relationship ->
             val type = typeById[relationship.relationTypeId] ?: return@filter false
             when (mode) {
-                GraphMode.FAMILY -> type.category == RelationCategory.FAMILY
+                GraphMode.FAMILY -> RelationshipSemantics.isFamilyLike(type)
                 GraphMode.SOCIAL -> type.category == RelationCategory.SOCIAL
                 GraphMode.ALL -> true
             }
@@ -122,32 +124,33 @@ object GraphLayoutEngine {
         val personIds = people.map { it.id }
         val sameGeneration = DisjointSet(personIds)
         val spouseUnits = DisjointSet(personIds)
-        val parentChildEdges = mutableListOf<Pair<String, String>>()
+        val parentChildEdges = mutableListOf<ParentChildEdge>()
         val spouseEdges = mutableListOf<RelationshipEntity>()
         val siblingEdges = mutableListOf<RelationshipEntity>()
 
         relationships.forEach { relationship ->
             val type = typeById[relationship.relationTypeId] ?: return@forEach
-            when {
-                isParentChild(type) -> {
-                    parentChildEdges += relationship.fromPersonId to relationship.toPersonId
+            when (RelationshipSemantics.kind(type)) {
+                FamilyRelationKind.PARENT_CHILD -> {
+                    RelationshipSemantics.parentChildEdge(relationship, type)?.let(parentChildEdges::add)
                 }
-                isSpouse(type) -> {
+                FamilyRelationKind.SPOUSE -> {
                     spouseEdges += relationship
                     sameGeneration.union(relationship.fromPersonId, relationship.toPersonId)
                     spouseUnits.union(relationship.fromPersonId, relationship.toPersonId)
                 }
-                isSibling(type) -> {
+                FamilyRelationKind.SIBLING -> {
                     siblingEdges += relationship
                     sameGeneration.union(relationship.fromPersonId, relationship.toPersonId)
                 }
+                FamilyRelationKind.OTHER -> Unit
             }
         }
 
         val constraints = mutableMapOf<String, MutableList<Pair<String, Int>>>()
-        parentChildEdges.forEach { (parentId, childId) ->
-            val parentRoot = sameGeneration.find(parentId)
-            val childRoot = sameGeneration.find(childId)
+        parentChildEdges.forEach { edge ->
+            val parentRoot = sameGeneration.find(edge.parentPersonId)
+            val childRoot = sameGeneration.find(edge.childPersonId)
             constraints.getOrPut(parentRoot) { mutableListOf() } += childRoot to 1
             constraints.getOrPut(childRoot) { mutableListOf() } += parentRoot to -1
         }
@@ -192,9 +195,9 @@ object GraphLayoutEngine {
         }
         val parentUnitsByUnit = mutableMapOf<String, MutableSet<String>>()
         val childUnitsByUnit = mutableMapOf<String, MutableSet<String>>()
-        parentChildEdges.forEach { (parentId, childId) ->
-            val parentUnit = unitByPerson.getValue(parentId)
-            val childUnit = unitByPerson.getValue(childId)
+        parentChildEdges.forEach { edge ->
+            val parentUnit = unitByPerson.getValue(edge.parentPersonId)
+            val childUnit = unitByPerson.getValue(edge.childPersonId)
             if (parentUnit != childUnit) {
                 parentUnitsByUnit.getOrPut(childUnit) { mutableSetOf() } += parentUnit
                 childUnitsByUnit.getOrPut(parentUnit) { mutableSetOf() } += childUnit
@@ -294,7 +297,7 @@ object GraphLayoutEngine {
         positions: Map<String, LayoutPoint>,
         spouseEdges: List<RelationshipEntity>,
         siblingEdges: List<RelationshipEntity>,
-        parentChildEdges: List<Pair<String, String>>,
+        parentChildEdges: List<ParentChildEdge>,
         unitByPerson: Map<String, String>,
     ): List<RoutedRelationship> {
         val routes = mutableListOf<RoutedRelationship>()
@@ -309,17 +312,15 @@ object GraphLayoutEngine {
             GraphRouteStyle.CONFIRMED_INFERENCE,
         )
 
-        val relationshipByPair = relationships
-            .filter { isParentChild(typeById[it.relationTypeId]) }
-            .associateBy { it.fromPersonId to it.toPersonId }
         parentChildEdges
-            .groupBy { (parentId, childId) ->
-                childId to (unitByPerson[parentId] ?: parentId)
+            .groupBy { edge ->
+                edge.childPersonId to
+                    (unitByPerson[edge.parentPersonId] ?: edge.parentPersonId)
             }
             .forEach { (key, edges) ->
                 val childId = key.first
                 val childPoint = positions[childId] ?: return@forEach
-                val parentPoints = edges.mapNotNull { positions[it.first] }
+                val parentPoints = edges.mapNotNull { positions[it.parentPersonId] }
                 if (parentPoints.isEmpty()) return@forEach
                 val parentPoint = LayoutPoint(
                     x = parentPoints.map { it.x }.average().toFloat(),
@@ -336,9 +337,7 @@ object GraphLayoutEngine {
                         RouteSegment(LayoutPoint(childPoint.x, busY), childEntry),
                     )
                 }
-                val relationshipIds = edges.mapNotNull { (parentId, child) ->
-                    relationshipByPair[parentId to child]?.id
-                }
+                val relationshipIds = edges.map { it.relationshipId }
                 routes += RoutedRelationship(
                     groupKey = pairKey(parentPoint, childPoint),
                     relationshipIds = relationshipIds,
@@ -421,7 +420,7 @@ object GraphLayoutEngine {
         pinnedPositions: Map<String, LayoutPoint>,
     ): GraphLayoutResult {
         val familyRelationships = relationships.filter {
-            typeById[it.relationTypeId]?.category == RelationCategory.FAMILY
+            RelationshipSemantics.isFamilyLike(typeById[it.relationTypeId])
         }
         val familyIds = (familyRelationships.flatMap { listOf(it.fromPersonId, it.toPersonId) } +
             listOfNotNull(myPersonId)).toSet()
@@ -465,7 +464,7 @@ object GraphLayoutEngine {
         }
         val socialRoutes = buildSimpleRoutes(
             relationships.filter {
-                typeById[it.relationTypeId]?.category != RelationCategory.FAMILY
+                !RelationshipSemantics.isFamilyLike(typeById[it.relationTypeId])
             },
             positions,
             GraphRouteStyle.SOCIAL,
@@ -510,13 +509,6 @@ object GraphLayoutEngine {
                 segments = listOf(RouteSegment(start, end)),
             )
         }
-
-    private fun isParentChild(type: RelationTypeEntity?): Boolean =
-        type?.id == "preset_parent_child"
-
-    private fun isSpouse(type: RelationTypeEntity?): Boolean = type?.id == "preset_spouse"
-
-    private fun isSibling(type: RelationTypeEntity?): Boolean = type?.id == "preset_sibling"
 
     private fun pairKey(firstPersonId: String, secondPersonId: String): String {
         val pair = listOf(firstPersonId, secondPersonId).sorted()

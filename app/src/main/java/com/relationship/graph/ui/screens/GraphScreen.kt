@@ -51,6 +51,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import com.relationship.graph.data.local.RelationCategory
 import com.relationship.graph.data.local.GraphMode
+import com.relationship.graph.data.RelationshipSemantics
 import com.relationship.graph.data.local.RelationTypeEntity
 import com.relationship.graph.data.local.RelationshipEntity
 import com.relationship.graph.data.inference.InferredRelationshipCandidate
@@ -696,16 +697,20 @@ private fun EdgeRelationshipDialog(
 }
 
 private fun filterRelationshipsForMode(state: AppUiState): List<RelationshipEntity> {
-    val category = when (state.graphMode) {
-        GraphMode.FAMILY -> RelationCategory.FAMILY
-        GraphMode.SOCIAL -> RelationCategory.SOCIAL
-        GraphMode.ALL -> null
-    } ?: return state.relationships
-    val typeIds = state.relationTypes
-        .filter { it.category == category }
-        .map { it.id }
-        .toSet()
-    return state.relationships.filter { it.relationTypeId in typeIds }
+    if (state.graphMode == GraphMode.ALL) return state.relationships
+    val category = if (state.graphMode == GraphMode.SOCIAL) {
+        RelationCategory.SOCIAL
+    } else {
+        null
+    }
+    return state.relationships.filter { relationship ->
+        val type = state.relationType(relationship.relationTypeId)
+        if (category == null) {
+            RelationshipSemantics.isFamilyLike(type)
+        } else {
+            type?.category == category
+        }
+    }
 }
 
 private fun filterPeopleForMode(
@@ -741,7 +746,11 @@ private fun highlightedPersonIds(
         ?.takeIf { state.graphMode == GraphMode.ALL }
         ?.let { category ->
         val categoryTypeIds = state.relationTypes
-            .filter { it.category == category }
+            .filter {
+                it.category == category ||
+                    (category == RelationCategory.FAMILY &&
+                        RelationshipSemantics.isFamilyLike(it))
+            }
             .map { it.id }
             .toSet()
         relationships

@@ -33,6 +33,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import com.relationship.graph.data.local.RelationCategory
+import com.relationship.graph.data.RelationshipSemantics
 import com.relationship.graph.data.local.GraphMode
 import com.relationship.graph.data.local.GraphPositionEntity
 import com.relationship.graph.data.local.PersonEntity
@@ -124,20 +125,20 @@ fun GraphCanvas(
         edgeGroups.flatMap { group -> group.relationships.map { it.id to group } }.toMap()
     }
     val nodeCategoryByPerson = remember(relationships, relationTypes) {
-        val categoryByType = relationTypes.associate { it.id to it.category }
+        val typeById = relationTypes.associateBy { it.id }
         val familyPeople = mutableSetOf<String>()
         val socialPeople = mutableSetOf<String>()
         relationships.forEach { relationship ->
-            when (categoryByType[relationship.relationTypeId]) {
-                RelationCategory.FAMILY -> {
+            val type = typeById[relationship.relationTypeId]
+            when {
+                RelationshipSemantics.isFamilyLike(type) -> {
                     familyPeople += relationship.fromPersonId
                     familyPeople += relationship.toPersonId
                 }
-                RelationCategory.SOCIAL -> {
+                type?.category == RelationCategory.SOCIAL -> {
                     socialPeople += relationship.fromPersonId
                     socialPeople += relationship.toPersonId
                 }
-                else -> Unit
             }
         }
         people.associate { person ->

@@ -1,10 +1,12 @@
 package com.relationship.graph.data.inference
 
 import com.relationship.graph.data.local.Gender
+import com.relationship.graph.data.FamilyRelationKind
+import com.relationship.graph.data.ParentChildEdge
+import com.relationship.graph.data.RelationshipSemantics
 import com.relationship.graph.data.local.InferenceDismissalEntity
 import com.relationship.graph.data.local.InferenceRelationTypeIds
 import com.relationship.graph.data.local.PersonEntity
-import com.relationship.graph.data.local.RelationCategory
 import com.relationship.graph.data.local.RelationTypeEntity
 import com.relationship.graph.data.local.RelationshipEntity
 import java.time.LocalDate
@@ -63,19 +65,19 @@ object InferenceEngine {
         val peopleById = people.associateBy { it.id }
         val typeById = relationTypes.associateBy { it.id }
         val familyRelationships = relationships.filter {
-            typeById[it.relationTypeId]?.category == RelationCategory.FAMILY
+            RelationshipSemantics.isFamilyLike(typeById[it.relationTypeId])
         }
-        val parentChildRelationships = familyRelationships.filter {
-            isParentChild(typeById[it.relationTypeId])
+        val parentChildEdges = familyRelationships.mapNotNull {
+            RelationshipSemantics.parentChildEdge(it, typeById[it.relationTypeId])
         }
         val spouseRelationships = familyRelationships.filter {
-            isSpouse(typeById[it.relationTypeId])
+            RelationshipSemantics.kind(typeById[it.relationTypeId]) == FamilyRelationKind.SPOUSE
         }
         val siblingRelationships = familyRelationships.filter {
-            isSibling(typeById[it.relationTypeId])
+            RelationshipSemantics.kind(typeById[it.relationTypeId]) == FamilyRelationKind.SIBLING
         }
-        val parentsByChild = parentChildRelationships.groupBy { it.toPersonId }
-        val childrenByParent = parentChildRelationships.groupBy { it.fromPersonId }
+        val parentsByChild = parentChildEdges.groupBy { it.childPersonId }
+        val childrenByParent = parentChildEdges.groupBy { it.parentPersonId }
         val spousesByPerson = buildSymmetricMap(spouseRelationships)
         val explicitSiblingsByPerson = buildSymmetricMap(siblingRelationships)
         val familyPairs = familyRelationships.map { pairKey(it.fromPersonId, it.toPersonId) }.toSet()
@@ -84,10 +86,10 @@ object InferenceEngine {
         }
 
         fun parents(personId: String): List<PersonEntity> =
-            parentsByChild[personId].orEmpty().mapNotNull { peopleById[it.fromPersonId] }
+            parentsByChild[personId].orEmpty().mapNotNull { peopleById[it.parentPersonId] }
 
         fun children(personId: String): List<PersonEntity> =
-            childrenByParent[personId].orEmpty().mapNotNull { peopleById[it.toPersonId] }
+            childrenByParent[personId].orEmpty().mapNotNull { peopleById[it.childPersonId] }
 
         fun spouses(personId: String): List<PersonEntity> =
             spousesByPerson[personId].orEmpty().mapNotNull(peopleById::get)
@@ -170,10 +172,12 @@ object InferenceEngine {
                         toLabel = grandchildLabel(anchor, side),
                         reason = "${parent.name}的父母",
                         evidence = listOfNotNull(
-                            parentsByChild[anchor.id]?.firstOrNull { it.fromPersonId == parent.id }?.id,
+                            parentsByChild[anchor.id]
+                                ?.firstOrNull { it.parentPersonId == parent.id }
+                                ?.relationshipId,
                             parentsByChild[parent.id]?.firstOrNull {
-                                it.fromPersonId == grandparent.id
-                            }?.id,
+                                it.parentPersonId == grandparent.id
+                            }?.relationshipId,
                         ),
                     )
                 }
@@ -196,8 +200,8 @@ object InferenceEngine {
                                 siblingRelationships,
                             ) + listOfNotNull(
                                 parentsByChild[anchor.id]
-                                    ?.firstOrNull { it.fromPersonId == parent.id }
-                                    ?.id,
+                                    ?.firstOrNull { it.parentPersonId == parent.id }
+                                    ?.relationshipId,
                             ),
                         )
 
@@ -219,9 +223,10 @@ object InferenceEngine {
                                         siblingRelationships,
                                     ) + listOfNotNull(
                                         parentsByChild[anchor.id]
-                                            ?.firstOrNull { it.fromPersonId == parent.id }
-                                            ?.id,
-                                    ) + childrenByParent[auntOrUncle.id].orEmpty().map { it.id },
+                                            ?.firstOrNull { it.parentPersonId == parent.id }
+                                            ?.relationshipId,
+                                    ) + childrenByParent[auntOrUncle.id].orEmpty()
+                                        .map { it.relationshipId },
                                 )
                             }
                         }
@@ -260,8 +265,8 @@ object InferenceEngine {
                         evidence = listOfNotNull(
                             spousesByPerson[anchor.id]?.firstOrNull { it == spouse.id },
                             parentsByChild[spouse.id]?.firstOrNull {
-                                it.fromPersonId == parentInLaw.id
-                            }?.id,
+                                it.parentPersonId == parentInLaw.id
+                            }?.relationshipId,
                         ),
                     )
                 }
@@ -278,8 +283,8 @@ object InferenceEngine {
                             evidence = listOfNotNull(
                                 spousesByPerson[anchor.id]?.firstOrNull { it == spouse.id },
                                 childrenByParent[spouse.id]?.firstOrNull {
-                                    it.toPersonId == child.id
-                                }?.id,
+                                    it.childPersonId == child.id
+                                }?.relationshipId,
                             ),
                         )
                     }
@@ -316,8 +321,8 @@ object InferenceEngine {
                         reason = "${child.name}的配偶",
                         evidence = listOfNotNull(
                             childrenByParent[anchor.id]?.firstOrNull {
-                                it.toPersonId == child.id
-                            }?.id,
+                                it.childPersonId == child.id
+                            }?.relationshipId,
                             spousesByPerson[child.id]?.firstOrNull { it == childSpouse.id },
                         ),
                     )
@@ -360,8 +365,8 @@ object InferenceEngine {
                             reason = "${parent.name}的配偶",
                             evidence = listOfNotNull(
                                 parentsByChild[anchor.id]?.firstOrNull {
-                                    it.fromPersonId == parent.id
-                                }?.id,
+                                    it.parentPersonId == parent.id
+                                }?.relationshipId,
                                 spousesByPerson[parent.id]?.firstOrNull {
                                     it == stepParent.id
                                 },
@@ -413,16 +418,19 @@ object InferenceEngine {
     private fun siblingEvidence(
         firstPersonId: String,
         secondPersonId: String,
-        parentsByChild: Map<String, List<RelationshipEntity>>,
+        parentsByChild: Map<String, List<ParentChildEdge>>,
         siblingRelationships: List<RelationshipEntity>,
-    ): Set<String> = (
-        parentsByChild[firstPersonId].orEmpty() +
-            parentsByChild[secondPersonId].orEmpty() +
-            siblingRelationships.filter {
-                (it.fromPersonId == firstPersonId && it.toPersonId == secondPersonId) ||
-                    (it.fromPersonId == secondPersonId && it.toPersonId == firstPersonId)
-            }
-        ).map { it.id }.toSet()
+    ): Set<String> {
+        val parentEvidence = (
+            parentsByChild[firstPersonId].orEmpty() +
+                parentsByChild[secondPersonId].orEmpty()
+            ).map { it.relationshipId }
+        val explicitSiblingEvidence = siblingRelationships.filter {
+            (it.fromPersonId == firstPersonId && it.toPersonId == secondPersonId) ||
+                (it.fromPersonId == secondPersonId && it.toPersonId == firstPersonId)
+        }.map { it.id }
+        return (parentEvidence + explicitSiblingEvidence).toSet()
+    }
 
     private fun siblingLabel(person: PersonEntity, relative: PersonEntity): String {
         val older = isOlderThan(person, relative)
@@ -556,12 +564,4 @@ object InferenceEngine {
     private fun dismissalKey(from: String, to: String, ruleId: String): String =
         "$ruleId\u0000$from\u0000$to"
 
-    private fun isParentChild(type: RelationTypeEntity?): Boolean =
-        type?.id == "preset_parent_child"
-
-    private fun isSpouse(type: RelationTypeEntity?): Boolean =
-        type?.id == "preset_spouse"
-
-    private fun isSibling(type: RelationTypeEntity?): Boolean =
-        type?.id == "preset_sibling"
 }
