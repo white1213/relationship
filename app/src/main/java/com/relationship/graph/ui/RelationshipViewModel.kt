@@ -1,0 +1,244 @@
+package com.relationship.graph.ui
+
+import android.app.Application
+import android.graphics.Bitmap
+import android.net.Uri
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.relationship.graph.RelationshipApplication
+import com.relationship.graph.data.local.PersonEntity
+import com.relationship.graph.data.local.PersonTagEntity
+import com.relationship.graph.data.local.RelationCategory
+import com.relationship.graph.data.local.RelationDirection
+import com.relationship.graph.data.local.RelationTypeEntity
+import com.relationship.graph.data.local.RelationshipEntity
+import com.relationship.graph.data.local.TagEntity
+import java.util.UUID
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+
+data class AppUiState(
+    val isLoading: Boolean = true,
+    val people: List<PersonEntity> = emptyList(),
+    val tags: List<TagEntity> = emptyList(),
+    val personTags: List<PersonTagEntity> = emptyList(),
+    val relationTypes: List<RelationTypeEntity> = emptyList(),
+    val relationships: List<RelationshipEntity> = emptyList(),
+    val searchQuery: String = "",
+    val selectedCategory: RelationCategory? = null,
+) {
+    val tagsByPerson: Map<String, List<TagEntity>>
+        get() {
+            val tagById = tags.associateBy { it.id }
+            return personTags
+                .groupBy { it.personId }
+                .mapValues { (_, refs) -> refs.mapNotNull { tagById[it.tagId] }.sortedBy { it.name } }
+        }
+
+    fun person(personId: String?): PersonEntity? = people.firstOrNull { it.id == personId }
+
+    fun relationType(typeId: String?): RelationTypeEntity? =
+        relationTypes.firstOrNull { it.id == typeId }
+
+    fun relationship(relationshipId: String?): RelationshipEntity? =
+        relationships.firstOrNull { it.id == relationshipId }
+
+    fun relationshipsForPerson(personId: String): List<RelationshipEntity> =
+        relationships.filter { it.fromPersonId == personId || it.toPersonId == personId }
+}
+
+class RelationshipViewModel(application: Application) : AndroidViewModel(application) {
+    private val app = application as RelationshipApplication
+    private val repository = app.container.repository
+    private val backupManager = requireNotNull(app.container.backupManager)
+
+    private val searchQuery = MutableStateFlow("")
+    private val selectedCategory = MutableStateFlow<RelationCategory?>(null)
+    private val messageChannel = Channel<String>(Channel.BUFFERED)
+    val messages = messageChannel.receiveAsFlow()
+
+    val uiState: StateFlow<AppUiState> = combine(
+        repository.people,
+        repository.tagEntities,
+        repository.personTags,
+        repository.relationTypes,
+        repository.relationships,
+        searchQuery,
+        selectedCategory,
+    ) { values ->
+        @Suppress("UNCHECKED_CAST")
+        AppUiState(
+            isLoading = false,
+            people = values[0] as List<PersonEntity>,
+            tags = values[1] as List<TagEntity>,
+            personTags = values[2] as List<PersonTagEntity>,
+            relationTypes = values[3] as List<RelationTypeEntity>,
+            relationships = values[4] as List<RelationshipEntity>,
+            searchQuery = values[5] as String,
+            selectedCategory = values[6] as RelationCategory?,
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppUiState())
+
+    init {
+        viewModelScope.launch {
+            runCatching { repository.ensurePresetRelationTypes() }
+                .onFailure { messageChannel.send(it.message ?: "关系类型初始化失败") }
+        }
+    }
+
+    fun setSearchQuery(value: String) {
+        searchQuery.value = value
+    }
+
+    fun setCategory(value: RelationCategory?) {
+        selectedCategory.value = value
+    }
+
+    fun savePerson(
+        id: String,
+        name: String,
+        avatarPath: String?,
+        phone: String,
+        birthday: String,
+        address: String,
+        notes: String,
+        tagNames: List<String>,
+        existing: PersonEntity?,
+    ) {
+        if (name.isBlank()) {
+            sendMessage("请输入姓名")
+            return
+        }
+        viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            repository.savePerson(
+                person = PersonEntity(
+                    id = id,
+                    name = name.trim(),
+                    avatarPath = avatarPath,
+                    phone = phone.trim(),
+                    birthday = birthday.trim(),
+                    address = address.trim(),
+                    notes = notes.trim(),
+                    graphX = existing?.graphX ?: 0f,
+                    graphY = existing?.graphY ?: 0f,
+                    positionInitialized = existing?.positionInitialized ?: false,
+                    createdAt = existing?.createdAt ?: now,
+                    updatedAt = now,
+                ),
+                tagNames = tagNames,
+            )
+            sendMessage("人物资料已保存")
+        }
+    }
+
+    fun deletePerson(person: PersonEntity) {
+        viewModelScope.launch {
+            runCatching { repository.deletePerson(person) }
+                .onSuccess { sendMessage("人物已删除") }
+                .onFailure { sendMessage(it.message ?: "删除失败") }
+        }
+    }
+
+    fun saveRelationship(
+        relationshipId: String?,
+        fromPersonId: String,
+        toPersonId: String,
+        relationTypeId: String,
+        note: String,
+        existing: RelationshipEntity?,
+    ) {
+        if (fromPersonId == toPersonId) {
+            sendMessage("不能把一个人与自己建立关系")
+            return
+        }
+        viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            repository.saveRelationship(
+                RelationshipEntity(
+                    id = relationshipId ?: UUID.randomUUID().toString(),
+                    fromPersonId = fromPersonId,
+                    toPersonId = toPersonId,
+                    relationTypeId = relationTypeId,
+                    note = note.trim(),
+                    createdAt = existing?.createdAt ?: now,
+                    updatedAt = now,
+                ),
+            )
+            sendMessage("关系已保存")
+        }
+    }
+
+    fun deleteRelationship(relationship: RelationshipEntity) {
+        viewModelScope.launch {
+            repository.deleteRelationship(relationship)
+            sendMessage("关系已删除")
+        }
+    }
+
+    fun createCustomRelationType(
+        name: String,
+        inverseName: String?,
+        category: RelationCategory,
+        direction: RelationDirection,
+    ) {
+        if (name.isBlank()) {
+            sendMessage("请输入关系名称")
+            return
+        }
+        viewModelScope.launch {
+            val type = RelationTypeEntity(
+                id = UUID.randomUUID().toString(),
+                name = name.trim(),
+                inverseName = inverseName?.trim()?.takeIf(String::isNotEmpty),
+                category = category,
+                direction = direction,
+                isBuiltIn = false,
+            )
+            runCatching { repository.saveRelationType(type) }
+                .onSuccess { sendMessage("自定义关系已创建") }
+                .onFailure { sendMessage("关系名称已存在") }
+        }
+    }
+
+    suspend fun importAvatarFromUri(personId: String, uri: Uri): String =
+        repository.importAvatarFromUri(personId, uri)
+
+    suspend fun importAvatarBitmap(personId: String, bitmap: Bitmap): String =
+        repository.importAvatarBitmap(personId, bitmap)
+
+    fun saveGraphPositions(positions: Map<String, Pair<Float, Float>>) {
+        viewModelScope.launch {
+            repository.updateGraphPositions(positions)
+        }
+    }
+
+    fun exportBackup(uri: Uri, password: String) {
+        viewModelScope.launch {
+            runCatching { backupManager.export(uri, password) }
+                .onSuccess { sendMessage("备份已导出") }
+                .onFailure { sendMessage(it.message ?: "备份失败") }
+        }
+    }
+
+    fun restoreBackup(uri: Uri, password: String) {
+        viewModelScope.launch {
+            runCatching {
+                val imported = backupManager.import(uri, password)
+                repository.replaceAll(imported)
+            }
+                .onSuccess { sendMessage("备份已恢复") }
+                .onFailure { sendMessage(it.message ?: "恢复失败，现有数据未改变") }
+        }
+    }
+
+    private fun sendMessage(message: String) {
+        messageChannel.trySend(message)
+    }
+}

@@ -1,0 +1,15 @@
+.gradle/
+.gradle-home/
+.tools/
+.tmp/
+.android-sdk/
+.android-avd/
+.android-user/
+.signing/
+.idea/
+local.properties
+**/build/
+*.iml
+*.keystore
+*.jks
+captures/
