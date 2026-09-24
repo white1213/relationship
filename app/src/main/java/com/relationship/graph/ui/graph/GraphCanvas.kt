@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -15,9 +14,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.input.pointer.pointerInput
@@ -30,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
+import com.relationship.graph.data.local.RelationCategory
 import com.relationship.graph.data.local.GraphMode
 import com.relationship.graph.data.local.GraphPositionEntity
 import com.relationship.graph.data.local.PersonEntity
@@ -37,6 +40,7 @@ import com.relationship.graph.data.local.RelationTypeEntity
 import com.relationship.graph.data.local.RelationshipEntity
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 data class GraphEdgeGroup(
     val key: String,
@@ -51,6 +55,13 @@ private data class Viewport(
     val zoom: Float = 0.8f,
 )
 
+private enum class NodeCategory {
+    FAMILY,
+    SOCIAL,
+    MIXED,
+    NONE,
+}
+
 @Composable
 fun GraphCanvas(
     people: List<PersonEntity>,
@@ -60,7 +71,9 @@ fun GraphCanvas(
     graphPositions: List<GraphPositionEntity>,
     highlightedPersonIds: Set<String>?,
     highlightedEdgeKeys: Set<String>?,
-    onPersonClick: (String) -> Unit,
+    selectedPersonId: String?,
+    onPersonSelected: (String) -> Unit,
+    onBackgroundClick: () -> Unit,
     onEdgeAction: (GraphEdgeGroup) -> Unit,
     onPersonMoved: (personId: String, x: Float, y: Float) -> Unit,
     modifier: Modifier = Modifier,
@@ -96,6 +109,41 @@ fun GraphCanvas(
     val relationshipToGroup = remember(edgeGroups) {
         edgeGroups.flatMap { group -> group.relationships.map { it.id to group } }.toMap()
     }
+    val nodeCategoryByPerson = remember(relationships, relationTypes) {
+        val categoryByType = relationTypes.associate { it.id to it.category }
+        val familyPeople = mutableSetOf<String>()
+        val socialPeople = mutableSetOf<String>()
+        relationships.forEach { relationship ->
+            when (categoryByType[relationship.relationTypeId]) {
+                RelationCategory.FAMILY -> {
+                    familyPeople += relationship.fromPersonId
+                    familyPeople += relationship.toPersonId
+                }
+                RelationCategory.SOCIAL -> {
+                    socialPeople += relationship.fromPersonId
+                    socialPeople += relationship.toPersonId
+                }
+                else -> Unit
+            }
+        }
+        people.associate { person ->
+            person.id to when {
+                person.id in familyPeople && person.id in socialPeople -> NodeCategory.MIXED
+                person.id in familyPeople -> NodeCategory.FAMILY
+                person.id in socialPeople -> NodeCategory.SOCIAL
+                else -> NodeCategory.NONE
+            }
+        }
+    }
+    val selectedRelationshipIds = remember(selectedPersonId, relationships) {
+        selectedPersonId?.let { personId ->
+            relationships
+                .filter { it.fromPersonId == personId || it.toPersonId == personId }
+                .map { it.id }
+                .toSet()
+        }.orEmpty()
+    }
+    val avatarImages = rememberAvatarImages(people)
     val viewportsByMode = remember { mutableStateMapOf<GraphMode, Viewport>() }
     var viewport by remember { mutableStateOf(Viewport()) }
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
@@ -201,8 +249,9 @@ fun GraphCanvas(
 
                     if (!moved && !longPressHandled) {
                         when {
-                            activeNodeId != null -> onPersonClick(activeNodeId!!)
+                            activeNodeId != null -> onPersonSelected(activeNodeId!!)
                             activeEdgeGroup != null -> onEdgeAction(activeEdgeGroup)
+                            else -> onBackgroundClick()
                         }
                     }
                     draggedNodeId?.let { personId ->
@@ -214,13 +263,17 @@ fun GraphCanvas(
                 }
             },
     ) {
-        val primary = Color(0xFF3F7FDD)
-        val spouse = Color(0xFFD35F78)
-        val sibling = Color(0xFF5A8FD6)
-        val social = Color(0xFF7A8796)
+        val parentColor = Color(0xFF3F7FDD)
+        val familyColor = Color(0xFF3F7FDD)
+        val socialColor = Color(0xFF2D8C7F)
+        val spouseColor = Color(0xFFD35F78)
+        val siblingColor = Color(0xFF5A8FD6)
+        val socialRouteColor = Color(0xFF7A8796)
+        val neutralColor = Color(0xFF8090A5)
         val muted = Color(0xFFB7C6D9)
         val labelText = Color(0xFF52647B)
         val center = Offset(size.width / 2f, size.height / 2f)
+        val occupiedLabels = mutableListOf<Rect>()
 
         withTransform({
             translate(center.x + viewport.pan.x, center.y + viewport.pan.y)
@@ -230,12 +283,12 @@ fun GraphCanvas(
                 val isHighlighted = highlightedEdgeKeys == null ||
                     route.relationshipIds.any { relationshipToGroup[it]?.key in highlightedEdgeKeys }
                 val routeColor = when (route.style) {
-                    GraphRouteStyle.PARENT_CHILD -> primary
-                    GraphRouteStyle.SPOUSE -> spouse
-                    GraphRouteStyle.SIBLING -> sibling
-                    GraphRouteStyle.SOCIAL -> social
-                }.copy(alpha = if (isHighlighted) 0.78f else 0.22f)
-                val strokeWidth = if (isHighlighted) 2.8f else 1.7f
+                    GraphRouteStyle.PARENT_CHILD -> parentColor
+                    GraphRouteStyle.SPOUSE -> spouseColor
+                    GraphRouteStyle.SIBLING -> siblingColor
+                    GraphRouteStyle.SOCIAL -> socialRouteColor
+                }.copy(alpha = if (isHighlighted) 0.82f else 0.2f)
+                val strokeWidth = if (isHighlighted) 2.8f else 1.6f
                 val pathEffect = when (route.style) {
                     GraphRouteStyle.SIBLING,
                     GraphRouteStyle.SOCIAL,
@@ -265,70 +318,255 @@ fun GraphCanvas(
                         drawArrowHead(start = start, end = end, color = routeColor)
                     }
                 }
-
-                if (isHighlighted && viewport.zoom >= LABEL_REVEAL_ZOOM && route.relationshipIds.isNotEmpty()) {
-                    val label = route.relationshipIds
-                        .mapNotNull { relationshipToGroup[it] }
-                        .flatMap { it.relationTypes }
-                        .distinctBy { it.id }
-                        .joinToString("/") { it.name }
-                    if (label.isNotBlank()) {
-                        drawRouteLabel(
-                            text = label,
-                            point = route.labelPoint.toOffset(),
-                            color = labelText,
-                            textMeasurer = textMeasurer,
-                        )
-                    }
-                }
             }
 
             people.forEach { person ->
                 val position = nodePositions[person.id] ?: return@forEach
                 val isHighlighted = highlightedPersonIds == null || person.id in highlightedPersonIds
                 val isDragged = draggedNodeId == person.id
+                val isSelected = person.id == selectedPersonId
                 val isMyPerson = person.id == myPersonId
+                val category = nodeCategoryByPerson[person.id] ?: NodeCategory.NONE
                 val radius = if (isDragged) 31f else 28f
+                val categoryColor = when (category) {
+                    NodeCategory.FAMILY -> familyColor
+                    NodeCategory.SOCIAL -> socialColor
+                    NodeCategory.MIXED -> familyColor
+                    NodeCategory.NONE -> neutralColor
+                }
                 val fill = when {
-                    !isHighlighted -> muted.copy(alpha = 0.32f)
+                    !isHighlighted -> muted.copy(alpha = 0.3f)
                     isDragged -> Color(0xFF275EAD)
                     isMyPerson -> Color(0xFF244D86)
-                    else -> primary
+                    else -> categoryColor
                 }
-                if (isDragged || isMyPerson) {
+                if (isDragged || isMyPerson || isSelected) {
                     drawCircle(
-                        color = primary.copy(alpha = if (isMyPerson) 0.2f else 0.16f),
-                        radius = radius + 8f,
+                        color = categoryColor.copy(alpha = if (isSelected) 0.24f else 0.16f),
+                        radius = radius + if (isSelected) 10f else 8f,
                         center = position,
                     )
                 }
                 drawCircle(color = Color.White, radius = radius + 2.5f, center = position)
-                drawCircle(color = fill, radius = radius, center = position)
-                drawCircle(
-                    color = Color.White.copy(alpha = if (isHighlighted) 0.24f else 0.06f),
-                    radius = radius,
-                    center = position,
-                    style = Stroke(width = if (isMyPerson) 2.6f else 1.2f),
-                )
+                val avatar = avatarImages[person.id]
+                if (avatar != null) {
+                    val avatarRect = Rect(
+                        left = position.x - radius,
+                        top = position.y - radius,
+                        right = position.x + radius,
+                        bottom = position.y + radius,
+                    )
+                    clipPath(Path().apply { addOval(avatarRect) }) {
+                        drawImage(
+                            image = avatar,
+                            dstOffset = androidx.compose.ui.unit.IntOffset(
+                                (position.x - radius).roundToInt(),
+                                (position.y - radius).roundToInt(),
+                            ),
+                            dstSize = IntSize(
+                                (radius * 2f).roundToInt(),
+                                (radius * 2f).roundToInt(),
+                            ),
+                        )
+                    }
+                    if (!isHighlighted) {
+                        drawCircle(color = muted.copy(alpha = 0.58f), radius = radius, center = position)
+                    }
+                } else {
+                    drawCircle(color = fill, radius = radius, center = position)
+                    val initial = person.name.trim().take(1).ifBlank { "?" }
+                    val measured = textMeasurer.measure(
+                        AnnotatedString(initial),
+                        style = TextStyle(
+                            color = if (isHighlighted) Color.White else Color.White.copy(alpha = 0.7f),
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        ),
+                    )
+                    drawText(
+                        textLayoutResult = measured,
+                        topLeft = Offset(
+                            position.x - measured.size.width / 2f,
+                            position.y - measured.size.height / 2f,
+                        ),
+                    )
+                }
 
-                val initial = person.name.trim().take(1).ifBlank { "?" }
-                val measured = textMeasurer.measure(
-                    AnnotatedString(initial),
+                when (category) {
+                    NodeCategory.MIXED -> {
+                        drawArc(
+                            color = familyColor,
+                            startAngle = 180f,
+                            sweepAngle = 180f,
+                            useCenter = false,
+                            topLeft = Offset(position.x - radius, position.y - radius),
+                            size = Size(radius * 2f, radius * 2f),
+                            style = Stroke(width = 4f),
+                        )
+                        drawArc(
+                            color = socialColor,
+                            startAngle = 0f,
+                            sweepAngle = 180f,
+                            useCenter = false,
+                            topLeft = Offset(position.x - radius, position.y - radius),
+                            size = Size(radius * 2f, radius * 2f),
+                            style = Stroke(width = 4f),
+                        )
+                    }
+                    NodeCategory.FAMILY,
+                    NodeCategory.SOCIAL,
+                    NodeCategory.NONE,
+                    -> drawCircle(
+                        color = Color.White.copy(alpha = if (isHighlighted) 0.26f else 0.07f),
+                        radius = radius,
+                        center = position,
+                        style = Stroke(width = if (isMyPerson || isSelected) 2.6f else 1.2f),
+                    )
+                }
+
+                if (isMyPerson) {
+                    val badgeCenter = position + Offset(radius * 0.78f, radius * 0.78f)
+                    drawCircle(color = Color.White, radius = 11f, center = badgeCenter)
+                    drawCircle(color = Color(0xFFF0B84A), radius = 9f, center = badgeCenter)
+                    val badge = textMeasurer.measure(
+                        AnnotatedString("我"),
+                        style = TextStyle(
+                            color = Color(0xFF513600),
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                        ),
+                    )
+                    drawText(
+                        textLayoutResult = badge,
+                        topLeft = Offset(
+                            badgeCenter.x - badge.size.width / 2f,
+                            badgeCenter.y - badge.size.height / 2f,
+                        ),
+                    )
+                }
+            }
+        }
+
+        val screenPositions = nodePositions.mapValues { (_, point) ->
+            center + viewport.pan + point * viewport.zoom
+        }
+        val prioritisedPeople = people.sortedWith(
+            compareByDescending<PersonEntity> {
+                it.id == selectedPersonId || it.id == myPersonId
+            }.thenBy { it.name },
+        )
+        prioritisedPeople.forEach { person ->
+            val isMyPerson = person.id == myPersonId
+            val isSelected = person.id == selectedPersonId
+            val showName = isMyPerson || isSelected || viewport.zoom >= NAME_REVEAL_ZOOM
+            if (!showName) return@forEach
+            val position = screenPositions[person.id] ?: return@forEach
+            val measuredName = textMeasurer.measure(
+                AnnotatedString(person.name),
+                style = TextStyle(
+                    color = labelText,
+                    fontSize = 11.sp,
+                    fontWeight = if (isMyPerson || isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                ),
+            )
+            val paddingX = 6f
+            val paddingY = 3f
+            val labelWidth = measuredName.size.width + paddingX * 2
+            val labelHeight = measuredName.size.height + paddingY * 2
+            val preferredLeft = position.x - labelWidth / 2f
+            val left = preferredLeft.coerceIn(4f, max(4f, size.width - labelWidth - 4f))
+            val top = position.y + 31f * viewport.zoom
+            val rect = Rect(left, top, left + labelWidth, top + labelHeight)
+            val hasCollision = occupiedLabels.any { it.overlaps(rect) }
+            if (hasCollision && !isMyPerson && !isSelected) return@forEach
+            drawRoundRect(
+                color = Color.White.copy(alpha = 0.9f),
+                topLeft = Offset(left, top),
+                size = Size(labelWidth, labelHeight),
+                cornerRadius = CornerRadius(8f, 8f),
+            )
+            drawText(
+                textLayoutResult = measuredName,
+                topLeft = Offset(left + paddingX, top + paddingY),
+            )
+            occupiedLabels += rect
+
+            if (isSelected || viewport.zoom >= DETAIL_REVEAL_ZOOM) {
+                val relationshipCount = relationships.count {
+                    it.fromPersonId == person.id || it.toPersonId == person.id
+                }
+                val measuredCount = textMeasurer.measure(
+                    AnnotatedString("$relationshipCount 条关系"),
                     style = TextStyle(
-                        color = if (isHighlighted) Color.White else Color.White.copy(alpha = 0.7f),
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFF60748D),
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Medium,
                     ),
                 )
+                val countLeft = (left + labelWidth - measuredCount.size.width - 8f)
+                    .coerceAtLeast(4f)
+                val countTop = top + labelHeight + 1f
                 drawText(
-                    textLayoutResult = measured,
-                    topLeft = Offset(
-                        position.x - measured.size.width / 2f,
-                        position.y - measured.size.height / 2f,
-                    ),
+                    textLayoutResult = measuredCount,
+                    topLeft = Offset(countLeft, countTop),
+                )
+                occupiedLabels += Rect(
+                    countLeft,
+                    countTop,
+                    countLeft + measuredCount.size.width,
+                    countTop + measuredCount.size.height,
                 )
             }
         }
+
+        layout.routes
+            .sortedByDescending { route ->
+                route.relationshipIds.any { it in selectedRelationshipIds }
+            }
+            .forEach { route ->
+                val isHighlighted = highlightedEdgeKeys == null ||
+                    route.relationshipIds.any { relationshipToGroup[it]?.key in highlightedEdgeKeys }
+                val isDirectlySelected = route.relationshipIds.any { it in selectedRelationshipIds }
+                if (!isHighlighted || (!isDirectlySelected && viewport.zoom < LABEL_REVEAL_ZOOM)) {
+                    return@forEach
+                }
+                val label = route.relationshipIds
+                    .mapNotNull { relationshipToGroup[it] }
+                    .flatMap { it.relationTypes }
+                    .distinctBy { it.id }
+                    .joinToString("/") { it.name }
+                if (label.isBlank()) return@forEach
+                val point = center + viewport.pan + route.labelPoint.toOffset() * viewport.zoom
+                val measured = textMeasurer.measure(
+                    AnnotatedString(label),
+                    style = TextStyle(
+                        color = labelText,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                    ),
+                )
+                val paddingX = 7f
+                val paddingY = 4f
+                val labelWidth = measured.size.width + paddingX * 2
+                val labelHeight = measured.size.height + paddingY * 2
+                val left = (point.x - labelWidth / 2f)
+                    .coerceIn(4f, max(4f, size.width - labelWidth - 4f))
+                val top = (point.y - labelHeight / 2f)
+                    .coerceIn(4f, max(4f, size.height - labelHeight - 4f))
+                val rect = Rect(left, top, left + labelWidth, top + labelHeight)
+                if (occupiedLabels.any { it.overlaps(rect) } && !isDirectlySelected) return@forEach
+                drawRoundRect(
+                    color = Color.White.copy(alpha = 0.95f),
+                    topLeft = Offset(left, top),
+                    size = Size(labelWidth, labelHeight),
+                    cornerRadius = CornerRadius(10f, 10f),
+                )
+                drawText(
+                    textLayoutResult = measured,
+                    topLeft = Offset(left + paddingX, top + paddingY),
+                )
+                occupiedLabels += rect
+            }
     }
 }
 
@@ -367,38 +605,6 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawArrowHead(
     val base = tip - unit * 11f
     drawLine(color, base + perpendicular * 6f, tip, strokeWidth = 3f)
     drawLine(color, base - perpendicular * 6f, tip, strokeWidth = 3f)
-}
-
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawRouteLabel(
-    text: String,
-    point: Offset,
-    color: Color,
-    textMeasurer: TextMeasurer,
-) {
-    val measured = textMeasurer.measure(
-        AnnotatedString(text),
-        style = TextStyle(
-            color = color,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Medium,
-        ),
-    )
-    val paddingX = 7f
-    val paddingY = 4f
-    val topLeft = Offset(
-        point.x - measured.size.width / 2f - paddingX,
-        point.y - measured.size.height / 2f - paddingY,
-    )
-    drawRoundRect(
-        color = Color.White.copy(alpha = 0.94f),
-        topLeft = topLeft,
-        size = Size(
-            measured.size.width + paddingX * 2,
-            measured.size.height + paddingY * 2,
-        ),
-        cornerRadius = CornerRadius(10f, 10f),
-    )
-    drawText(measured, topLeft = topLeft + Offset(paddingX, paddingY))
 }
 
 private fun hitTestNode(
@@ -468,4 +674,6 @@ fun buildEdgeGroups(
         }
 }
 
+private const val NAME_REVEAL_ZOOM = 0.55f
+private const val DETAIL_REVEAL_ZOOM = 0.9f
 private const val LABEL_REVEAL_ZOOM = 1.15f

@@ -292,26 +292,8 @@ object GraphLayoutEngine {
         unitByPerson: Map<String, String>,
     ): List<RoutedRelationship> {
         val routes = mutableListOf<RoutedRelationship>()
-        spouseEdges.forEach { relationship ->
-            val start = positions[relationship.fromPersonId] ?: return@forEach
-            val end = positions[relationship.toPersonId] ?: return@forEach
-            routes += RoutedRelationship(
-                groupKey = pairKey(relationship.fromPersonId, relationship.toPersonId),
-                relationshipIds = listOf(relationship.id),
-                style = GraphRouteStyle.SPOUSE,
-                segments = listOf(RouteSegment(start, end)),
-            )
-        }
-        siblingEdges.forEach { relationship ->
-            val start = positions[relationship.fromPersonId] ?: return@forEach
-            val end = positions[relationship.toPersonId] ?: return@forEach
-            routes += RoutedRelationship(
-                groupKey = pairKey(relationship.fromPersonId, relationship.toPersonId),
-                relationshipIds = listOf(relationship.id),
-                style = GraphRouteStyle.SIBLING,
-                segments = listOf(RouteSegment(start, end)),
-            )
-        }
+        routes += buildSimpleRoutes(spouseEdges, positions, GraphRouteStyle.SPOUSE)
+        routes += buildSimpleRoutes(siblingEdges, positions, GraphRouteStyle.SIBLING)
 
         val relationshipByPair = relationships
             .filter { isParentChild(typeById[it.relationTypeId]) }
@@ -411,16 +393,7 @@ object GraphLayoutEngine {
         }
         return GraphLayoutResult(
             positions = positions,
-            routes = relationships.mapNotNull { relationship ->
-                val start = positions[relationship.fromPersonId] ?: return@mapNotNull null
-                val end = positions[relationship.toPersonId] ?: return@mapNotNull null
-                RoutedRelationship(
-                    groupKey = pairKey(relationship.fromPersonId, relationship.toPersonId),
-                    relationshipIds = listOf(relationship.id),
-                    style = GraphRouteStyle.SOCIAL,
-                    segments = listOf(RouteSegment(start, end)),
-                )
-            },
+            routes = buildSimpleRoutes(relationships, positions, GraphRouteStyle.SOCIAL),
             generationByPerson = generations,
             conflicts = 0,
         )
@@ -476,18 +449,13 @@ object GraphLayoutEngine {
         pinnedPositions.forEach { (personId, point) ->
             if (personId in positions) positions[personId] = point
         }
-        val socialRoutes = relationships
-            .filter { typeById[it.relationTypeId]?.category != RelationCategory.FAMILY }
-            .mapNotNull { relationship ->
-                val start = positions[relationship.fromPersonId] ?: return@mapNotNull null
-                val end = positions[relationship.toPersonId] ?: return@mapNotNull null
-                RoutedRelationship(
-                    groupKey = pairKey(relationship.fromPersonId, relationship.toPersonId),
-                    relationshipIds = listOf(relationship.id),
-                    style = GraphRouteStyle.SOCIAL,
-                    segments = listOf(RouteSegment(start, end)),
-                )
-            }
+        val socialRoutes = buildSimpleRoutes(
+            relationships.filter {
+                typeById[it.relationTypeId]?.category != RelationCategory.FAMILY
+            },
+            positions,
+            GraphRouteStyle.SOCIAL,
+        )
         return GraphLayoutResult(
             positions = positions,
             routes = base.routes + socialRoutes,
@@ -510,6 +478,24 @@ object GraphLayoutEngine {
         }
         return adjacency
     }
+
+    private fun buildSimpleRoutes(
+        relationships: List<RelationshipEntity>,
+        positions: Map<String, LayoutPoint>,
+        style: GraphRouteStyle,
+    ): List<RoutedRelationship> = relationships
+        .groupBy { pairKey(it.fromPersonId, it.toPersonId) }
+        .mapNotNull { (groupKey, relationshipsForPair) ->
+            val first = relationshipsForPair.first()
+            val start = positions[first.fromPersonId] ?: return@mapNotNull null
+            val end = positions[first.toPersonId] ?: return@mapNotNull null
+            RoutedRelationship(
+                groupKey = groupKey,
+                relationshipIds = relationshipsForPair.map { it.id },
+                style = style,
+                segments = listOf(RouteSegment(start, end)),
+            )
+        }
 
     private fun isParentChild(type: RelationTypeEntity?): Boolean =
         type?.id == "preset_parent_child" ||

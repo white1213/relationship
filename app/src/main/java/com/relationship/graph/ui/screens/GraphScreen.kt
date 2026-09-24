@@ -1,5 +1,6 @@
 package com.relationship.graph.ui.screens
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -7,11 +8,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Share
@@ -25,6 +28,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
@@ -36,7 +40,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import com.relationship.graph.data.local.RelationCategory
 import com.relationship.graph.data.local.GraphMode
@@ -47,6 +57,7 @@ import com.relationship.graph.ui.RelationshipViewModel
 import com.relationship.graph.ui.components.AppTopBar
 import com.relationship.graph.ui.components.EmptyState
 import com.relationship.graph.ui.components.MyPersonPickerDialog
+import com.relationship.graph.ui.components.PersonAvatar
 import com.relationship.graph.ui.graph.GraphCanvas
 import com.relationship.graph.ui.graph.GraphEdgeGroup
 import com.relationship.graph.ui.graph.buildEdgeGroups
@@ -67,6 +78,8 @@ fun GraphScreen(
     var relationshipToDelete by remember { mutableStateOf<RelationshipEntity?>(null) }
     var myPersonDialogDismissed by rememberSaveable { mutableStateOf(false) }
     var showMyPersonDialog by rememberSaveable { mutableStateOf(false) }
+    var selectedPersonId by rememberSaveable { mutableStateOf<String?>(null) }
+    var showLegend by rememberSaveable { mutableStateOf(false) }
 
     val visibleRelationships = remember(
         state.relationships,
@@ -104,6 +117,9 @@ fun GraphScreen(
             AppTopBar(
                 title = "关系图谱",
                 actions = {
+                    IconButton(onClick = { showLegend = true }) {
+                        Icon(Icons.Rounded.Info, contentDescription = "图例")
+                    }
                     IconButton(onClick = { searchVisible = !searchVisible }) {
                         Icon(
                             imageVector = if (searchVisible) Icons.Rounded.Close else Icons.Rounded.Search,
@@ -164,7 +180,10 @@ fun GraphScreen(
                 GraphMode.entries.forEach { mode ->
                     Tab(
                         selected = state.graphMode == mode,
-                        onClick = { viewModel.setGraphMode(mode) },
+                        onClick = {
+                            selectedPersonId = null
+                            viewModel.setGraphMode(mode)
+                        },
                         text = { Text(mode.displayName()) },
                     )
                 }
@@ -216,21 +235,66 @@ fun GraphScreen(
                     modifier = Modifier.weight(1f),
                 )
             } else {
-                GraphCanvas(
-                    people = visiblePeople,
-                    edgeGroups = edgeGroups,
-                    mode = state.graphMode,
-                    myPersonId = state.myPersonId,
-                    graphPositions = state.graphPositions,
-                    highlightedPersonIds = highlightedPeople,
-                    highlightedEdgeKeys = highlightedEdges,
-                    onPersonClick = onPersonClick,
-                    onEdgeAction = { edgeDialog = it },
-                    onPersonMoved = { personId, x, y ->
-                        viewModel.saveGraphPosition(personId, x, y)
-                    },
-                    modifier = Modifier.weight(1f),
-                )
+                Box(modifier = Modifier.weight(1f)) {
+                    GraphCanvas(
+                        people = visiblePeople,
+                        edgeGroups = edgeGroups,
+                        mode = state.graphMode,
+                        myPersonId = state.myPersonId,
+                        graphPositions = state.graphPositions,
+                        highlightedPersonIds = highlightedPeople,
+                        highlightedEdgeKeys = highlightedEdges,
+                        selectedPersonId = selectedPersonId,
+                        onPersonSelected = { selectedPersonId = it },
+                        onBackgroundClick = { selectedPersonId = null },
+                        onEdgeAction = {
+                            selectedPersonId = null
+                            edgeDialog = it
+                        },
+                        onPersonMoved = { personId, x, y ->
+                            viewModel.saveGraphPosition(personId, x, y)
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+
+                    state.person(selectedPersonId)?.let { selectedPerson ->
+                        Surface(
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .fillMaxWidth()
+                                .padding(14.dp),
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                            tonalElevation = 5.dp,
+                            shadowElevation = 5.dp,
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                PersonAvatar(person = selectedPerson, size = 46.dp)
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = selectedPerson.name,
+                                        style = MaterialTheme.typography.titleMedium,
+                                    )
+                                    Text(
+                                        text = "${state.relationshipsForPerson(selectedPerson.id).size} 条关系",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                androidx.compose.material3.Button(
+                                    onClick = { onPersonClick(selectedPerson.id) },
+                                ) {
+                                    Text("查看详情")
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -291,6 +355,10 @@ fun GraphScreen(
                 myPersonDialogDismissed = true
             },
         )
+    }
+
+    if (showLegend) {
+        GraphLegendDialog(onDismiss = { showLegend = false })
     }
 }
 
@@ -436,4 +504,102 @@ private fun GraphMode.displayName(): String = when (this) {
     GraphMode.FAMILY -> "家谱"
     GraphMode.SOCIAL -> "社交"
     GraphMode.ALL -> "全部"
+}
+
+@Composable
+private fun GraphLegendDialog(onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("图例") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                LegendNodeRow(
+                    label = "家庭人物",
+                    primaryColor = Color(0xFF3F7FDD),
+                )
+                LegendNodeRow(
+                    label = "社交人物",
+                    primaryColor = Color(0xFF2D8C7F),
+                )
+                LegendNodeRow(
+                    label = "家庭与社交都有",
+                    primaryColor = Color(0xFF3F7FDD),
+                    secondaryColor = Color(0xFF2D8C7F),
+                )
+                LegendNodeRow(
+                    label = "我",
+                    primaryColor = Color(0xFF244D86),
+                    isMyPerson = true,
+                )
+                LegendLineRow("父母 / 子女", Color(0xFF3F7FDD), doubleLine = false, dashed = false)
+                LegendLineRow("配偶 / 伴侣", Color(0xFFD35F78), doubleLine = true, dashed = false)
+                LegendLineRow("兄弟姐妹", Color(0xFF5A8FD6), doubleLine = false, dashed = true)
+                LegendLineRow("社交关系", Color(0xFF7A8796), doubleLine = false, dashed = true)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("关闭") }
+        },
+    )
+}
+
+@Composable
+private fun LegendNodeRow(
+    label: String,
+    primaryColor: Color,
+    secondaryColor: Color? = null,
+    isMyPerson: Boolean = false,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Canvas(modifier = Modifier.size(38.dp, 28.dp)) {
+            val center = Offset(size.width / 2f, size.height / 2f)
+            val radius = 10f
+            drawCircle(Color.White, radius + 2f, center)
+            drawCircle(primaryColor, radius, center)
+            secondaryColor?.let { secondary ->
+                drawArc(
+                    color = secondary,
+                    startAngle = 0f,
+                    sweepAngle = 180f,
+                    useCenter = false,
+                    topLeft = Offset(center.x - radius, center.y - radius),
+                    size = Size(radius * 2f, radius * 2f),
+                    style = Stroke(width = 3f),
+                )
+            }
+            if (isMyPerson) {
+                drawCircle(Color(0xFFF0B84A), radius = 4f, center = center + Offset(7f, 7f))
+            }
+        }
+        Text(label)
+    }
+}
+
+@Composable
+private fun LegendLineRow(
+    label: String,
+    color: Color,
+    doubleLine: Boolean,
+    dashed: Boolean,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Canvas(modifier = Modifier.size(38.dp, 28.dp)) {
+            val start = Offset(3f, size.height / 2f)
+            val end = Offset(size.width - 3f, size.height / 2f)
+            val pathEffect = if (dashed) PathEffect.dashPathEffect(floatArrayOf(6f, 5f)) else null
+            if (doubleLine) {
+                drawLine(color, start + Offset(0f, -2f), end + Offset(0f, -2f), 2f)
+                drawLine(color, start + Offset(0f, 2f), end + Offset(0f, 2f), 2f)
+            } else {
+                drawLine(color, start, end, 2.5f, pathEffect = pathEffect)
+            }
+        }
+        Text(label)
+    }
 }

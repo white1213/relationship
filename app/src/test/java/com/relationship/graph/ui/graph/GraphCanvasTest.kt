@@ -185,6 +185,38 @@ class GraphCanvasTest {
         assertTrue(social.routes.all { it.style == GraphRouteStyle.SOCIAL })
     }
 
+    @Test
+    fun parallelSocialRelationshipsRenderAsOneRoute() {
+        val people = listOf(
+            PersonEntity(id = "me", name = "我"),
+            PersonEntity(id = "friend", name = "朋友"),
+        )
+        val friendType = relationType("preset_friend", "朋友", RelationDirection.BIDIRECTIONAL)
+        val colleagueType = relationType(
+            "preset_colleague",
+            "同事",
+            RelationDirection.BIDIRECTIONAL,
+        )
+
+        val layout = GraphLayoutEngine.layout(
+            people = people,
+            relationships = listOf(
+                relationship("friend", "me", "friend", friendType.id),
+                relationship("colleague", "friend", "me", colleagueType.id),
+            ),
+            relationTypes = listOf(friendType, colleagueType),
+            mode = GraphMode.SOCIAL,
+            myPersonId = "me",
+            pinnedPositions = emptyMap(),
+        )
+
+        assertEquals(1, layout.routes.size)
+        assertEquals(
+            setOf("friend", "colleague"),
+            layout.routes.single().relationshipIds.toSet(),
+        )
+    }
+
     private fun relationType(
         id: String,
         name: String,
