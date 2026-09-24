@@ -60,6 +60,8 @@ import com.relationship.graph.ui.components.MyPersonPickerDialog
 import com.relationship.graph.ui.components.PersonAvatar
 import com.relationship.graph.ui.graph.GraphCanvas
 import com.relationship.graph.ui.graph.GraphEdgeGroup
+import com.relationship.graph.ui.graph.GraphFocusEngine
+import com.relationship.graph.ui.graph.GraphFocusScope
 import com.relationship.graph.ui.graph.buildEdgeGroups
 import com.relationship.graph.ui.relationshipSentence
 
@@ -79,28 +81,98 @@ fun GraphScreen(
     var myPersonDialogDismissed by rememberSaveable { mutableStateOf(false) }
     var showMyPersonDialog by rememberSaveable { mutableStateOf(false) }
     var selectedPersonId by rememberSaveable { mutableStateOf<String?>(null) }
+    var focusPersonId by rememberSaveable { mutableStateOf<String?>(null) }
+    var focusScope by rememberSaveable { mutableStateOf<GraphFocusScope?>(null) }
+    var centerOnPersonId by rememberSaveable { mutableStateOf<String?>(null) }
+    var branchDialogPersonId by rememberSaveable { mutableStateOf<String?>(null) }
     var showLegend by rememberSaveable { mutableStateOf(false) }
 
-    val visibleRelationships = remember(
+    val modeRelationships = remember(
         state.relationships,
         state.relationTypes,
         state.graphMode,
     ) {
         filterRelationshipsForMode(state)
     }
-    val visiblePeople = remember(state.people, visibleRelationships, state.myPersonId, state.graphMode) {
-        filterPeopleForMode(state, visibleRelationships)
+    val modePeople = remember(state.people, modeRelationships, state.myPersonId, state.graphMode) {
+        filterPeopleForMode(state, modeRelationships)
+    }
+    val focusResult = remember(focusPersonId, focusScope, modeRelationships, state.relationTypes) {
+        focusPersonId?.let { personId ->
+            GraphFocusEngine.resolve(
+                anchorPersonId = personId,
+                scope = focusScope ?: GraphFocusScope.RELATED,
+                relationships = modeRelationships,
+                relationTypes = state.relationTypes,
+            )
+        }
+    }
+    val focusedPersonIds = focusResult?.personIds
+    val visibleRelationships = remember(modeRelationships, focusedPersonIds, focusScope) {
+        if (focusScope == null || focusedPersonIds == null) {
+            modeRelationships
+        } else {
+            modeRelationships.filter {
+                it.fromPersonId in focusedPersonIds && it.toPersonId in focusedPersonIds
+            }
+        }
+    }
+    val visiblePeople = remember(modePeople, focusedPersonIds, focusScope) {
+        if (focusScope == null || focusedPersonIds == null) {
+            modePeople
+        } else {
+            modePeople.filter { it.id in focusedPersonIds }
+        }
     }
     val edgeGroups = remember(visibleRelationships, state.relationTypes) {
         buildEdgeGroups(visibleRelationships, state.relationTypes)
     }
-    val highlightedPeople = highlightedPersonIds(state, visiblePeople, visibleRelationships)
-    val highlightedEdges = highlightedEdgeKeys(
+    val searchHighlightedPeople = highlightedPersonIds(state, visiblePeople, visibleRelationships)
+    val searchHighlightedEdges = highlightedEdgeKeys(
         state = state,
         people = visiblePeople,
         relationships = visibleRelationships,
         groups = edgeGroups,
     )
+    val focusedRelationshipIds = focusResult?.relationshipIds.orEmpty()
+    val focusedEdgeKeys = edgeGroups
+        .filter { group ->
+            group.relationships.any { it.id in focusedRelationshipIds }
+        }
+        .map { it.key }
+        .toSet()
+    val highlightedPeople = when {
+        focusScope != null -> null
+        focusPersonId == null -> searchHighlightedPeople
+        searchHighlightedPeople == null -> focusedPersonIds
+        else -> searchHighlightedPeople intersect focusedPersonIds.orEmpty()
+    }
+    val highlightedEdges = when {
+        focusScope != null -> null
+        focusPersonId == null -> searchHighlightedEdges
+        searchHighlightedEdges == null -> focusedEdgeKeys
+        else -> searchHighlightedEdges intersect focusedEdgeKeys
+    }
+
+    LaunchedEffect(state.searchQuery, visiblePeople, state.graphMode) {
+        val query = state.searchQuery.trim().lowercase()
+        if (query.isNotEmpty()) {
+            val matches = visiblePeople.filter { person ->
+                person.name.lowercase().contains(query) ||
+                    person.phone.lowercase().contains(query) ||
+                    state.tagsByPerson[person.id].orEmpty().any {
+                        it.name.lowercase().contains(query)
+                    }
+            }
+            if (matches.size == 1) {
+                val personId = matches.single().id
+                selectedPersonId = personId
+                focusPersonId = personId
+                focusScope = null
+                centerOnPersonId = personId
+            }
+        }
+    }
 
     LaunchedEffect(state.isLoading, state.people.size, state.myPersonId, myPersonDialogDismissed) {
         if (!state.isLoading &&
@@ -182,6 +254,9 @@ fun GraphScreen(
                         selected = state.graphMode == mode,
                         onClick = {
                             selectedPersonId = null
+                            focusPersonId = null
+                            focusScope = null
+                            centerOnPersonId = null
                             viewModel.setGraphMode(mode)
                         },
                         text = { Text(mode.displayName()) },
@@ -245,8 +320,22 @@ fun GraphScreen(
                         highlightedPersonIds = highlightedPeople,
                         highlightedEdgeKeys = highlightedEdges,
                         selectedPersonId = selectedPersonId,
-                        onPersonSelected = { selectedPersonId = it },
-                        onBackgroundClick = { selectedPersonId = null },
+                        centerOnPersonId = centerOnPersonId,
+                        centerRequestKey = focusPersonId?.let {
+                            "$it:${focusScope?.name}:${visiblePeople.size}"
+                        },
+                        onPersonSelected = { personId ->
+                            selectedPersonId = personId
+                            focusPersonId = personId
+                            focusScope = null
+                        },
+                        onPersonLongPress = { branchDialogPersonId = it },
+                        onBackgroundClick = {
+                            selectedPersonId = null
+                            focusPersonId = null
+                            focusScope = null
+                            centerOnPersonId = null
+                        },
                         onEdgeAction = {
                             selectedPersonId = null
                             edgeDialog = it
@@ -267,29 +356,60 @@ fun GraphScreen(
                             tonalElevation = 5.dp,
                             shadowElevation = 5.dp,
                         ) {
-                            Row(
+                            Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
                             ) {
-                                PersonAvatar(person = selectedPerson, size = 46.dp)
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = selectedPerson.name,
-                                        style = MaterialTheme.typography.titleMedium,
-                                    )
-                                    Text(
-                                        text = "${state.relationshipsForPerson(selectedPerson.id).size} 条关系",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                androidx.compose.material3.Button(
-                                    onClick = { onPersonClick(selectedPerson.id) },
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                                 ) {
-                                    Text("查看详情")
+                                    PersonAvatar(person = selectedPerson, size = 46.dp)
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = selectedPerson.name,
+                                            style = MaterialTheme.typography.titleMedium,
+                                        )
+                                        Text(
+                                            text = "${state.relationshipsForPerson(selectedPerson.id).size} 条关系",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                    androidx.compose.material3.Button(
+                                        onClick = { onPersonClick(selectedPerson.id) },
+                                    ) {
+                                        Text("查看详情")
+                                    }
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End,
+                                ) {
+                                    TextButton(
+                                        onClick = {
+                                            focusPersonId = selectedPerson.id
+                                            focusScope = GraphFocusScope.RELATED
+                                            centerOnPersonId = selectedPerson.id
+                                        },
+                                    ) {
+                                        Text("只看相关")
+                                    }
+                                    TextButton(
+                                        onClick = {
+                                            selectedPersonId = null
+                                            focusPersonId = null
+                                            focusScope = null
+                                            centerOnPersonId = null
+                                            viewModel.setSearchQuery("")
+                                            viewModel.setCategory(null)
+                                        },
+                                    ) {
+                                        Text("显示全部")
+                                    }
                                 }
                             }
                         }
@@ -353,6 +473,71 @@ fun GraphScreen(
             onDismiss = {
                 showMyPersonDialog = false
                 myPersonDialogDismissed = true
+            },
+        )
+    }
+
+    branchDialogPersonId?.let { personId ->
+        val person = state.person(personId)
+        AlertDialog(
+            onDismissRequest = { branchDialogPersonId = null },
+            title = { Text("${person?.name.orEmpty()} 的关系范围") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(
+                        onClick = {
+                            selectedPersonId = personId
+                            focusPersonId = personId
+                            focusScope = GraphFocusScope.RELATED
+                            centerOnPersonId = personId
+                            branchDialogPersonId = null
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("只看直接相关")
+                    }
+                    if (state.graphMode != GraphMode.SOCIAL) {
+                        TextButton(
+                            onClick = {
+                                selectedPersonId = personId
+                                focusPersonId = personId
+                                focusScope = GraphFocusScope.ANCESTORS
+                                centerOnPersonId = personId
+                                branchDialogPersonId = null
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("查看祖先")
+                        }
+                        TextButton(
+                            onClick = {
+                                selectedPersonId = personId
+                                focusPersonId = personId
+                                focusScope = GraphFocusScope.DESCENDANTS
+                                centerOnPersonId = personId
+                                branchDialogPersonId = null
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("查看后代")
+                        }
+                        TextButton(
+                            onClick = {
+                                selectedPersonId = personId
+                                focusPersonId = personId
+                                focusScope = GraphFocusScope.BRANCH
+                                centerOnPersonId = personId
+                                branchDialogPersonId = null
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("只看整个分支")
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { branchDialogPersonId = null }) { Text("取消") }
             },
         )
     }

@@ -7,6 +7,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Update
+import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -59,16 +60,16 @@ interface RelationshipDao {
     @Query("SELECT * FROM relationships WHERE id = :relationshipId LIMIT 1")
     suspend fun getRelationship(relationshipId: String): RelationshipEntity?
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Upsert
     suspend fun upsertPerson(person: PersonEntity)
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Upsert
     suspend fun upsertPeople(people: List<PersonEntity>)
 
     @Update
     suspend fun updatePerson(person: PersonEntity)
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Upsert
     suspend fun upsertTag(tag: TagEntity)
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
@@ -80,22 +81,22 @@ interface RelationshipDao {
     @Query("DELETE FROM person_tags WHERE personId = :personId")
     suspend fun deletePersonTags(personId: String)
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Upsert
     suspend fun upsertRelationType(type: RelationTypeEntity)
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertRelationTypes(types: List<RelationTypeEntity>)
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Upsert
     suspend fun upsertRelationships(relationships: List<RelationshipEntity>)
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Upsert
     suspend fun upsertRelationship(relationship: RelationshipEntity)
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Upsert
     suspend fun upsertGraphPosition(position: GraphPositionEntity)
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Upsert
     suspend fun upsertGraphPositions(positions: List<GraphPositionEntity>)
 
     @Delete

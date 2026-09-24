@@ -72,7 +72,10 @@ fun GraphCanvas(
     highlightedPersonIds: Set<String>?,
     highlightedEdgeKeys: Set<String>?,
     selectedPersonId: String?,
+    centerOnPersonId: String?,
+    centerRequestKey: String?,
     onPersonSelected: (String) -> Unit,
+    onPersonLongPress: (String) -> Unit,
     onBackgroundClick: () -> Unit,
     onEdgeAction: (GraphEdgeGroup) -> Unit,
     onPersonMoved: (personId: String, x: Float, y: Float) -> Unit,
@@ -162,6 +165,19 @@ fun GraphCanvas(
         }
     }
 
+    LaunchedEffect(centerOnPersonId, centerRequestKey, canvasSize) {
+        if (canvasSize.width > 0 && canvasSize.height > 0) {
+            centerOnPersonId
+                ?.let(layout.positions::get)
+                ?.let { point ->
+                    viewport = viewport.copy(
+                        pan = Offset(-point.x * viewport.zoom, -point.y * viewport.zoom),
+                    )
+                    viewportsByMode[mode] = viewport
+                }
+        }
+    }
+
     Canvas(
         modifier = modifier
             .fillMaxSize()
@@ -235,13 +251,20 @@ fun GraphCanvas(
                                 viewportsByMode[mode] = viewport
                             }
 
-                            if (activeEdgeGroup != null &&
-                                !moved &&
+                            if (!moved &&
                                 !longPressHandled &&
                                 change.uptimeMillis - startTime >= 500L
                             ) {
-                                longPressHandled = true
-                                onEdgeAction(activeEdgeGroup)
+                                when {
+                                    activeNodeId != null -> {
+                                        longPressHandled = true
+                                        onPersonLongPress(activeNodeId!!)
+                                    }
+                                    activeEdgeGroup != null -> {
+                                        longPressHandled = true
+                                        onEdgeAction(activeEdgeGroup)
+                                    }
+                                }
                             }
                             change.consume()
                         }
