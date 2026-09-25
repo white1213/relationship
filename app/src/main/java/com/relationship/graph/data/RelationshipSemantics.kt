@@ -1,6 +1,7 @@
 package com.relationship.graph.data
 
 import com.relationship.graph.data.local.RelationCategory
+import com.relationship.graph.data.local.Gender
 import com.relationship.graph.data.local.RelationTypeEntity
 import com.relationship.graph.data.local.RelationshipEntity
 
@@ -15,6 +16,7 @@ data class ParentChildEdge(
     val relationshipId: String,
     val parentPersonId: String,
     val childPersonId: String,
+    val parentRoleGender: Gender? = null,
 )
 
 object RelationshipSemantics {
@@ -49,12 +51,14 @@ object RelationshipSemantics {
                 relationshipId = relationship.id,
                 parentPersonId = relationship.fromPersonId,
                 childPersonId = relationship.toPersonId,
+                parentRoleGender = type.parentRoleGender(),
             )
         } else {
             ParentChildEdge(
                 relationshipId = relationship.id,
                 parentPersonId = relationship.toPersonId,
                 childPersonId = relationship.fromPersonId,
+                parentRoleGender = type.parentRoleGender(),
             )
         }
     }
@@ -76,6 +80,15 @@ object RelationshipSemantics {
             .replace("/", "")
             .replace("或", "")
             .removeSuffix("关系")
+
+    private fun RelationTypeEntity.parentRoleGender(): Gender? {
+        val normalizedName = normalize(name)
+        return when {
+            normalizedName in setOf("父亲", "爸爸", "父", "养父", "继父") -> Gender.MALE
+            normalizedName in setOf("母亲", "妈妈", "母", "养母", "继母") -> Gender.FEMALE
+            else -> null
+        }
+    }
 
     private val PARENT_NAMES = setOf(
         "父母",

@@ -70,9 +70,9 @@ object KinshipQueryEngine {
                 setOf(referencePersonId, targetPersonId)
         } ?: return null
         return KinshipQueryResult(
-            referenceCallsTarget = inferred.labelFor(referencePersonId),
-            targetCallsReference = inferred.labelFor(targetPersonId),
-            explanation = inferred.reason,
+            referenceCallsTarget = inferred.labelFor(targetPersonId),
+            targetCallsReference = inferred.labelFor(referencePersonId),
+            explanation = inferred.reasonText,
             confidence = inferred.confidence,
             isDirect = false,
         )

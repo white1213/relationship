@@ -179,7 +179,7 @@ fun PersonDetailScreen(
                                             style = MaterialTheme.typography.titleMedium,
                                         )
                                         Text(
-                                            text = candidate.labelFor(person.id),
+                                            text = candidate.labelFor(otherPersonId),
                                             color = MaterialTheme.colorScheme.primary,
                                             style = MaterialTheme.typography.labelLarge,
                                         )
@@ -191,7 +191,7 @@ fun PersonDetailScreen(
                                     )
                                 }
                                 Text(
-                                    text = "推导依据：${candidate.reason}",
+                                    text = "推导依据：${candidate.reasonText}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )

@@ -13,6 +13,7 @@ import com.relationship.graph.data.local.Gender
 import com.relationship.graph.data.local.PersonEntity
 import com.relationship.graph.data.local.RelationshipEntity
 import com.relationship.graph.data.local.RelationshipSource
+import com.relationship.graph.data.inference.InferenceEngine
 import java.util.UUID
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -287,6 +288,13 @@ class AiAssistantViewModel(application: Application) : AndroidViewModel(applicat
         val people = repository.people.first()
         val relationTypes = repository.relationTypes.first()
         val relationships = repository.relationships.first()
+        val dismissals = repository.inferenceDismissals.first()
+        val inferredCandidates = InferenceEngine.infer(
+            people = people,
+            relationships = relationships,
+            relationTypes = relationTypes,
+            dismissals = dismissals,
+        )
         val context = mapOf(
             "people" to people.map {
                 mapOf(
@@ -316,6 +324,16 @@ class AiAssistantViewModel(application: Application) : AndroidViewModel(applicat
                     "inverseLabelOverride" to it.inverseLabelOverride,
                 )
             },
+            "derivedRelationships" to inferredCandidates.map {
+                mapOf(
+                    "fromPersonId" to it.fromPersonId,
+                    "toPersonId" to it.toPersonId,
+                    "fromPersonLabel" to it.labelForFrom,
+                    "toPersonLabel" to it.labelForTo,
+                    "rule" to it.rule.id,
+                    "reason" to it.reasonText,
+                )
+            },
         )
         return "当前关系数据：\n${gson.toJson(context)}\n\n用户问题：\n$question"
     }
@@ -331,6 +349,8 @@ class AiAssistantViewModel(application: Application) : AndroidViewModel(applicat
         3. {"type":"add_relationship","relationship":{"fromPersonId":"已有ID","toPersonId":"已有ID","relationTypeId":"已有类型ID","note":""}}
         4. {"type":"update_relationship","relationship":{"id":"已有ID","fromPersonId":"","toPersonId":"","relationTypeId":"","note":""}}
         仅当用户明确要求修改时生成 actions。查询、称谓和普通问答应返回空 actions。
+        涉及亲属称谓时，必须以 derivedRelationships 中同一对人物的 fromPersonLabel 和 toPersonLabel 为准。
+        多个有效称谓用斜杠连接，不得自行改用其他地区叫法或替换方向。
         不确定时先提问，不得猜测人物或关系 ID。
     """.trimIndent()
 

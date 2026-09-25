@@ -57,6 +57,9 @@ data class InferredRelationshipCandidate(
     val alternativeRelationTypeId: String? = null,
     val alternativeLabelForFrom: String? = null,
     val alternativeLabelForTo: String? = null,
+    val secondaryLabelsForFrom: List<String> = emptyList(),
+    val secondaryLabelsForTo: List<String> = emptyList(),
+    val secondaryReasons: List<String> = emptyList(),
 ) {
     val evidenceFingerprint: String
         get() = supportingRelationshipIds.sorted().joinToString(",")
@@ -68,7 +71,7 @@ data class InferredRelationshipCandidate(
         val useAlternative =
             rule == InferenceRule.STEP_PARENT &&
                 confirmationMode == InferenceConfirmationMode.AS_STEP_CHILD
-        return when (personId) {
+        val primary = when (personId) {
             fromPersonId -> if (useAlternative) {
                 alternativeLabelForFrom ?: labelForFrom
             } else {
@@ -81,7 +84,17 @@ data class InferredRelationshipCandidate(
             }
             else -> ""
         }
+        if (useAlternative || primary.isBlank()) return primary
+        val secondary = if (personId == fromPersonId) {
+            secondaryLabelsForFrom
+        } else {
+            secondaryLabelsForTo
+        }
+        return (listOf(primary) + secondary).distinct().joinToString("/")
     }
+
+    val reasonText: String
+        get() = (listOf(reason) + secondaryReasons).distinct().joinToString("；")
 
     fun relationTypeFor(
         confirmationMode: InferenceConfirmationMode = InferenceConfirmationMode.AS_CHILD,
@@ -208,8 +221,10 @@ object InferenceEngine {
 
         people.forEach { anchor ->
             parents(anchor.id).forEach { parent ->
+                val parentEdge = parentsByChild[anchor.id].orEmpty()
+                    .firstOrNull { it.parentPersonId == parent.id }
                 parents(parent.id).forEach { grandparent ->
-                    val side = parentSide(parent)
+                    val side = parentSide(parent, parentEdge)
                     addDirected(
                         from = grandparent,
                         to = anchor,
@@ -231,7 +246,7 @@ object InferenceEngine {
 
                 siblings(parent.id).forEach { auntOrUncle ->
                     if (auntOrUncle.id != anchor.id && auntOrUncle.id !in parents(anchor.id).map { it.id }) {
-                        val side = parentSide(parent)
+                        val side = parentSide(parent, parentEdge)
                         addDirected(
                             from = auntOrUncle,
                             to = anchor,
@@ -254,7 +269,11 @@ object InferenceEngine {
 
                         children(auntOrUncle.id).forEach { cousin ->
                             if (cousin.id != anchor.id) {
-                                val cousinSide = if (parent.gender == Gender.FEMALE) "表" else "堂"
+                                val cousinSide = cousinSide(
+                                    parent = parent,
+                                    parentEdge = parentEdge,
+                                    auntOrUncle = auntOrUncle,
+                                )
                                 addSymmetric(
                                     first = anchor,
                                     second = cousin,
@@ -447,11 +466,22 @@ object InferenceEngine {
             .groupBy { pairKey(it.fromPersonId, it.toPersonId) }
             .values
             .mapNotNull { samePair ->
-                samePair.minWithOrNull(
+                val bestSteps = samePair.minOfOrNull { it.rule.steps } ?: return@mapNotNull null
+                val equivalent = samePair.filter { it.rule.steps == bestSteps }
+                val primary = equivalent.minWithOrNull(
                     compareBy<InferredRelationshipCandidate> { it.rule.steps }
                         .thenBy { it.rule.priority }
                         .thenBy { it.fromPersonId }
                         .thenBy { it.toPersonId },
+                ) ?: return@mapNotNull null
+                val alternatives = equivalent.filter { it !== primary }
+                primary.copy(
+                    supportingRelationshipIds = equivalent
+                        .flatMap { it.supportingRelationshipIds }
+                        .toSet(),
+                    secondaryLabelsForFrom = alternatives.map { it.labelForFrom },
+                    secondaryLabelsForTo = alternatives.map { it.labelForTo },
+                    secondaryReasons = alternatives.map { it.reason },
                 )
             }
             .sortedWith(compareBy({ peopleById[it.fromPersonId]?.name.orEmpty() }, {
@@ -546,7 +576,7 @@ object InferenceEngine {
             "母系" -> "舅舅"
             else -> "叔伯"
         }
-        Gender.FEMALE -> if (side == "父系") "姑母" else "姨母"
+        Gender.FEMALE -> if (side == "父系") "姑姑" else "姨妈"
         Gender.UNSPECIFIED -> "叔伯/舅姨"
     }
 
@@ -570,6 +600,7 @@ object InferenceEngine {
         relative: PersonEntity,
         side: String,
     ): String {
+        if (side == "堂表") return "堂表亲"
         val age = relativeAge(person, relative)
         return when (person.gender) {
             Gender.MALE -> when (age) {
@@ -752,16 +783,49 @@ object InferenceEngine {
         return anchorLabel to reverseLabel
     }
 
-    private fun parentSide(parent: PersonEntity): String = when (parent.gender) {
+    private fun parentSide(
+        parent: PersonEntity,
+        edge: ParentChildEdge?,
+    ): String = when (effectiveGender(parent, edge?.parentRoleGender)) {
         Gender.MALE -> "父系"
         Gender.FEMALE -> "母系"
         Gender.UNSPECIFIED -> "未知"
     }
 
+    private fun cousinSide(
+        parent: PersonEntity,
+        parentEdge: ParentChildEdge?,
+        auntOrUncle: PersonEntity,
+    ): String {
+        val parentGender = effectiveGender(parent, parentEdge?.parentRoleGender)
+        return if (parentGender == Gender.MALE && auntOrUncle.gender == Gender.MALE) {
+            "堂"
+        } else if (parentGender == Gender.MALE && auntOrUncle.gender == Gender.FEMALE) {
+            "表"
+        } else if (parentGender == Gender.FEMALE) {
+            "表"
+        } else {
+            "堂表"
+        }
+    }
+
+    private fun effectiveGender(
+        person: PersonEntity,
+        roleGender: Gender?,
+    ): Gender = if (person.gender != Gender.UNSPECIFIED) {
+        person.gender
+    } else {
+        roleGender ?: Gender.UNSPECIFIED
+    }
+
     private fun relativeAge(first: PersonEntity, second: PersonEntity): RelativeAge {
         val firstDate = parseBirthday(first.birthday) ?: return RelativeAge.UNKNOWN
         val secondDate = parseBirthday(second.birthday) ?: return RelativeAge.UNKNOWN
-        return if (firstDate.isBefore(secondDate)) RelativeAge.OLDER else RelativeAge.YOUNGER
+        return when {
+            firstDate.isBefore(secondDate) -> RelativeAge.OLDER
+            firstDate.isAfter(secondDate) -> RelativeAge.YOUNGER
+            else -> RelativeAge.UNKNOWN
+        }
     }
 
     private fun parseBirthday(value: String): LocalDate? =

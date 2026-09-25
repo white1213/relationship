@@ -40,7 +40,7 @@
 可直接安装的 APK 位于：
 
 ```text
-dist/relationship-graph-v1.6.1.apk
+dist/relationship-graph-v1.6.2.apk
 ```
 
 把该文件传到 Android 手机后打开。系统首次提示时，允许当前文件管理器“安装未知应用”。

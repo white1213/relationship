@@ -98,7 +98,7 @@ class InferenceEngineTest {
                 it.rule == InferenceRule.AUNT_UNCLE &&
                     it.fromPersonId == "aunt" &&
                     it.toPersonId == "child" &&
-                    it.labelForFrom == "姑母"
+                    it.labelForFrom == "姑姑"
             },
         )
         assertTrue(
@@ -176,7 +176,7 @@ class InferenceEngineTest {
         )
         val people = listOf(
             person("grandfather", "爷爷", Gender.MALE),
-            person("father", "父亲", Gender.MALE),
+            person("father", "父亲"),
             person("child", "孩子"),
         )
         val relationships = listOf(
@@ -317,6 +317,67 @@ class InferenceEngineTest {
         assertTrue(candidate.labelFor("brother") in setOf("兄弟姐妹的配偶", "兄弟的配偶"))
     }
 
+    @Test
+    fun fatherBrotherChildIsTangCousin() {
+        val candidate = cousinCandidate(
+            parentGender = Gender.MALE,
+            parentSiblingGender = Gender.MALE,
+            anchorGender = Gender.MALE,
+            cousinGender = Gender.MALE,
+        )
+
+        assertEquals("堂弟", candidate.labelFor("child"))
+    }
+
+    @Test
+    fun fatherSisterChildAndMotherSiblingChildAreBiaoCousins() {
+        val fatherSisterChild = cousinCandidate(
+            parentGender = Gender.MALE,
+            parentSiblingGender = Gender.FEMALE,
+            anchorGender = Gender.MALE,
+            cousinGender = Gender.FEMALE,
+        )
+        val motherBrotherChild = cousinCandidate(
+            parentGender = Gender.FEMALE,
+            parentSiblingGender = Gender.MALE,
+            anchorGender = Gender.MALE,
+            cousinGender = Gender.MALE,
+        )
+
+        assertEquals("表弟", fatherSisterChild.labelFor("child"))
+        assertEquals("表弟", motherBrotherChild.labelFor("child"))
+    }
+
+    @Test
+    fun equalDistanceCousinPathsKeepAllDistinctLabels() {
+        val people = listOf(
+            person("grandparent", "祖辈"),
+            person("parent", "父亲", Gender.MALE),
+            person("uncle", "伯父", Gender.MALE),
+            person("aunt", "姑姑", Gender.FEMALE),
+            person("child", "孩子", Gender.MALE, "2000-01-01"),
+            person("cousin", "堂表亲", Gender.MALE, "1998-01-01"),
+        )
+        val relationships = listOf(
+            relationship("gp-parent", "grandparent", "parent", parentChild),
+            relationship("gp-uncle", "grandparent", "uncle", parentChild),
+            relationship("gp-aunt", "grandparent", "aunt", parentChild),
+            relationship("parent-child", "parent", "child", parentChild),
+            relationship("uncle-cousin", "uncle", "cousin", parentChild),
+            relationship("aunt-cousin", "aunt", "cousin", parentChild),
+        )
+
+        val candidate = infer(people, relationships).single {
+            it.rule == InferenceRule.COUSIN &&
+                setOf(it.fromPersonId, it.toPersonId) == setOf("child", "cousin")
+        }
+
+        assertEquals(
+            setOf("堂弟", "表弟"),
+            candidate.labelFor("child").split("/").toSet(),
+        )
+    }
+
     private fun infer(
         people: List<PersonEntity>,
         relationships: List<RelationshipEntity>,
@@ -350,4 +411,39 @@ class InferenceEngineTest {
         toPersonId = to,
         relationTypeId = typeId,
     )
+
+    private fun cousinCandidate(
+        parentGender: Gender,
+        parentSiblingGender: Gender,
+        anchorGender: Gender,
+        cousinGender: Gender,
+    ): InferredRelationshipCandidate {
+        val people = listOf(
+            person("grandparent", "祖辈"),
+            person("parent", "父辈", parentGender),
+            person("parent-sibling", "叔姑舅姨", parentSiblingGender),
+            person("child", "孩子", anchorGender, "2000-01-01"),
+            person("cousin", "堂表亲", cousinGender, "1998-01-01"),
+        )
+        val relationships = listOf(
+            relationship("gp-parent", "grandparent", "parent", parentChild),
+            relationship(
+                "gp-sibling",
+                "grandparent",
+                "parent-sibling",
+                parentChild,
+            ),
+            relationship("parent-child", "parent", "child", parentChild),
+            relationship(
+                "sibling-cousin",
+                "parent-sibling",
+                "cousin",
+                parentChild,
+            ),
+        )
+        return infer(people, relationships).single {
+            it.rule == InferenceRule.COUSIN &&
+                setOf(it.fromPersonId, it.toPersonId) == setOf("child", "cousin")
+        }
+    }
 }

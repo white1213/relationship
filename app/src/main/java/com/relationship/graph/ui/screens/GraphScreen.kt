@@ -685,13 +685,13 @@ fun GraphScreen(
             onDismissRequest = { inferenceCandidateDialog = null },
             title = {
                 Text(
-                    "${other?.name.orEmpty()} · ${candidate.labelFor(perspectivePersonId)}",
+                    "${other?.name.orEmpty()} · ${candidate.labelFor(otherPersonId)}",
                 )
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        "${perspective?.name.orEmpty()} → ${candidate.reason} → " +
+                        "${perspective?.name.orEmpty()} → ${candidate.reasonText} → " +
                             other?.name.orEmpty(),
                     )
                     Text(

@@ -53,8 +53,8 @@ class KinshipQueryEngineTest {
             inferredCandidates = listOf(candidate),
         )
 
-        assertEquals("孙辈", result?.referenceCallsTarget)
-        assertEquals("爷爷", result?.targetCallsReference)
+        assertEquals("爷爷", result?.referenceCallsTarget)
+        assertEquals("孙辈", result?.targetCallsReference)
         assertFalse(result?.isDirect == true)
     }
 
