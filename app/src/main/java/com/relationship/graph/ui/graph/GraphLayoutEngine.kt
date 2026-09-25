@@ -125,6 +125,7 @@ object GraphLayoutEngine {
         val sameGeneration = DisjointSet(personIds)
         val spouseUnits = DisjointSet(personIds)
         val parentChildEdges = mutableListOf<ParentChildEdge>()
+        val generationEdges = mutableListOf<Pair<String, String>>()
         val spouseEdges = mutableListOf<RelationshipEntity>()
         val siblingEdges = mutableListOf<RelationshipEntity>()
 
@@ -143,14 +144,21 @@ object GraphLayoutEngine {
                     siblingEdges += relationship
                     sameGeneration.union(relationship.fromPersonId, relationship.toPersonId)
                 }
+                FamilyRelationKind.SIBLING_IN_LAW,
+                FamilyRelationKind.COUSIN,
+                -> sameGeneration.union(relationship.fromPersonId, relationship.toPersonId)
+                FamilyRelationKind.AUNT_UNCLE,
+                FamilyRelationKind.AUNT_UNCLE_IN_LAW,
+                -> generationEdges += relationship.fromPersonId to relationship.toPersonId
                 FamilyRelationKind.OTHER -> Unit
             }
         }
 
         val constraints = mutableMapOf<String, MutableList<Pair<String, Int>>>()
-        parentChildEdges.forEach { edge ->
-            val parentRoot = sameGeneration.find(edge.parentPersonId)
-            val childRoot = sameGeneration.find(edge.childPersonId)
+        (parentChildEdges.map { it.parentPersonId to it.childPersonId } + generationEdges)
+            .forEach { (olderPersonId, youngerPersonId) ->
+            val parentRoot = sameGeneration.find(olderPersonId)
+            val childRoot = sameGeneration.find(youngerPersonId)
             constraints.getOrPut(parentRoot) { mutableListOf() } += childRoot to 1
             constraints.getOrPut(childRoot) { mutableListOf() } += parentRoot to -1
         }
@@ -307,6 +315,19 @@ object GraphLayoutEngine {
             relationships.filter {
                 typeById[it.relationTypeId]?.isInferenceOnly == true &&
                     it.source == RelationshipSource.CONFIRMED_INFERENCE
+            },
+            positions,
+            GraphRouteStyle.CONFIRMED_INFERENCE,
+        )
+        routes += buildSimpleRoutes(
+            relationships.filter {
+                val kind = RelationshipSemantics.kind(typeById[it.relationTypeId])
+                kind in setOf(
+                    FamilyRelationKind.AUNT_UNCLE,
+                    FamilyRelationKind.AUNT_UNCLE_IN_LAW,
+                    FamilyRelationKind.SIBLING_IN_LAW,
+                    FamilyRelationKind.COUSIN,
+                ) && typeById[it.relationTypeId]?.isInferenceOnly != true
             },
             positions,
             GraphRouteStyle.CONFIRMED_INFERENCE,

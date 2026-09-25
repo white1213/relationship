@@ -28,9 +28,9 @@ fun relationshipLabelForPerson(
                 val edge = RelationshipSemantics.parentChildEdge(relationship, type)
                 if (edge != null) {
                     return if (personId == edge.childPersonId) {
-                        parentTitle(otherPerson)
+                        parentTitle(otherPerson, type)
                     } else {
-                        childTitle(otherPerson)
+                        childTitle(otherPerson, type)
                     }
                 }
             }
@@ -43,6 +43,42 @@ fun relationshipLabelForPerson(
                     relationship = relationship,
                     resolver = resolver,
                 )
+            }
+            FamilyRelationKind.AUNT_UNCLE,
+            FamilyRelationKind.AUNT_UNCLE_IN_LAW,
+            -> return auntUncleLabelForPerson(
+                relationship = relationship,
+                type = type,
+                personId = personId,
+                otherPerson = otherPerson,
+            )
+            FamilyRelationKind.SIBLING_IN_LAW -> {
+                return if (isInLawAlias(type.name.trim())) {
+                    if (personId == relationship.toPersonId) {
+                        type.name
+                    } else {
+                        inverseInLawTitle(type.name.trim(), otherPerson)
+                    }
+                } else {
+                    directedAliasLabel(
+                        relationship = relationship,
+                        type = type,
+                        personId = personId,
+                    )
+                }
+            }
+            FamilyRelationKind.COUSIN -> {
+                val relative = people.firstOrNull { it.id == personId }
+                return if (relative == null) {
+                    directGenericLabel(relationship, type, personId)
+                } else {
+                    cousinTitle(
+                        target = otherPerson,
+                        relative = relative,
+                        type = type,
+                        resolver = resolver,
+                    )
+                }
             }
             FamilyRelationKind.OTHER -> {
                 val name = type.name.trim()
@@ -79,16 +115,90 @@ fun relationshipLabelForPerson(
     }
 }
 
-private fun parentTitle(person: PersonEntity): String = when (person.gender) {
+private fun directedAliasLabel(
+    relationship: RelationshipEntity,
+    type: RelationTypeEntity,
+    personId: String,
+): String {
+    val describesFromPerson = personId == relationship.toPersonId
+    return if (describesFromPerson) {
+        type.name
+    } else {
+        type.inverseName ?: type.name
+    }
+}
+
+private fun auntUncleLabelForPerson(
+    relationship: RelationshipEntity,
+    type: RelationTypeEntity,
+    personId: String,
+    otherPerson: PersonEntity,
+): String {
+    if (personId == relationship.toPersonId) return type.name
+    return when (type.name.trim()) {
+        "姑姑", "姑父" -> when (otherPerson.gender) {
+            Gender.MALE -> "侄子"
+            Gender.FEMALE -> "侄女"
+            Gender.UNSPECIFIED -> "侄子/侄女"
+        }
+        else -> type.inverseName ?: type.name
+    }
+}
+
+private fun directGenericLabel(
+    relationship: RelationshipEntity,
+    type: RelationTypeEntity,
+    personId: String,
+): String {
+    if (type.direction == RelationDirection.BIDIRECTIONAL) {
+        return relationship.labelOverride ?: type.name
+    }
+    return if (relationship.fromPersonId == personId) {
+        relationship.labelOverride ?: type.name
+    } else {
+        relationship.inverseLabelOverride ?: type.inverseName ?: type.name
+    }
+}
+
+private fun cousinTitle(
+    target: PersonEntity,
+    relative: PersonEntity,
+    type: RelationTypeEntity,
+    resolver: RelativeAgeResolver,
+): String {
+    val side = if (type.name.startsWith("堂")) "堂" else if (type.name.startsWith("表")) "表" else "堂表"
+    if (side == "堂表") return type.name
+    return when (resolver.compare(target, relative)) {
+        com.relationship.graph.data.inference.RelativeAge.OLDER -> when (target.gender) {
+            Gender.MALE -> "${side}哥"
+            Gender.FEMALE -> "${side}姐"
+            Gender.UNSPECIFIED -> if (side == "堂") "堂表亲" else "表亲"
+        }
+        com.relationship.graph.data.inference.RelativeAge.YOUNGER -> when (target.gender) {
+            Gender.MALE -> "${side}弟"
+            Gender.FEMALE -> "${side}妹"
+            Gender.UNSPECIFIED -> if (side == "堂") "堂表亲" else "表亲"
+        }
+        com.relationship.graph.data.inference.RelativeAge.UNKNOWN -> type.name
+    }
+}
+
+private fun parentTitle(person: PersonEntity, type: RelationTypeEntity): String {
+    if (type.id == "preset_mother_daughter") return "母亲"
+    return when (person.gender) {
     Gender.MALE -> "父亲"
     Gender.FEMALE -> "母亲"
     Gender.UNSPECIFIED -> "父母"
+    }
 }
 
-private fun childTitle(person: PersonEntity): String = when (person.gender) {
+private fun childTitle(person: PersonEntity, type: RelationTypeEntity): String {
+    if (type.id == "preset_mother_daughter") return "女儿"
+    return when (person.gender) {
     Gender.MALE -> "儿子"
     Gender.FEMALE -> "女儿"
     Gender.UNSPECIFIED -> "子女"
+    }
 }
 
 private fun spouseTitle(person: PersonEntity): String = when (person.gender) {

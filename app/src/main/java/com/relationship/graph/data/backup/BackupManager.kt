@@ -6,9 +6,13 @@ import android.util.Base64
 import com.google.gson.Gson
 import com.relationship.graph.data.GraphData
 import com.relationship.graph.data.RelationshipRepository
+import com.relationship.graph.data.FamilyRelationKind
+import com.relationship.graph.data.RelationshipSemantics
 import com.relationship.graph.data.local.GraphMode
 import com.relationship.graph.data.local.GraphPositionEntity
+import com.relationship.graph.data.local.Gender
 import com.relationship.graph.data.local.InferenceDismissalEntity
+import com.relationship.graph.data.local.MarriageKinshipMode
 import com.relationship.graph.data.local.PersonEntity
 import com.relationship.graph.data.local.RelationTypeEntity
 import com.relationship.graph.data.local.RelationshipEntity
@@ -147,6 +151,37 @@ class BackupManager(
                 },
             )
         }
+        val typeById = payload.relationTypes.associateBy { it.id }
+        val importedRelationships = payload.relationships.map { relationship ->
+            val inferredMode = defaultMarriageKinshipMode(
+                relationship = relationship,
+                people = importedPeople,
+                isSpouse = RelationshipSemantics.kind(
+                    typeById[relationship.relationTypeId],
+                ) == FamilyRelationKind.SPOUSE,
+            )
+            val normalizedMode = if (payload.schemaVersion < 5) {
+                inferredMode
+            } else {
+                relationship.marriageKinshipMode ?: inferredMode
+            }
+            val hasLegacyGenericSpouseLabel =
+                payload.schemaVersion >= 3 &&
+                    relationship.source.name == "CONFIRMED_INFERENCE" &&
+                    (
+                        relationship.labelOverride.orEmpty().contains("配偶的") ||
+                            relationship.inverseLabelOverride.orEmpty().contains("配偶的")
+                        )
+            relationship.copy(
+                marriageKinshipMode = normalizedMode,
+                labelOverride = relationship.labelOverride.takeUnless {
+                    hasLegacyGenericSpouseLabel
+                },
+                inverseLabelOverride = relationship.inverseLabelOverride.takeUnless {
+                    hasLegacyGenericSpouseLabel
+                },
+            )
+        }
         val personIds = importedPeople.map { it.id }.toSet()
         val importedPositions = payload.graphPositions.orEmpty()
             .filter { it.personId in personIds }
@@ -160,7 +195,7 @@ class BackupManager(
             tags = payload.tags,
             personTags = payload.personTags,
             relationTypes = payload.relationTypes,
-            relationships = payload.relationships,
+            relationships = importedRelationships,
             graphPositions = importedPositions,
             inferenceDismissals = importedDismissals,
             relativeAgeOrders = importedAgeOrders,
@@ -198,6 +233,25 @@ class BackupManager(
             },
         ) {
             "备份中存在无效的长幼关系"
+        }
+    }
+
+    private fun defaultMarriageKinshipMode(
+        relationship: RelationshipEntity,
+        people: List<PersonEntity>,
+        isSpouse: Boolean,
+    ): MarriageKinshipMode {
+        if (!isSpouse) return MarriageKinshipMode.RESPECTIVE
+        val byId = people.associateBy { it.id }
+        val first = byId[relationship.fromPersonId]?.gender
+        val second = byId[relationship.toPersonId]?.gender
+        return if (
+            (first == Gender.MALE && second == Gender.FEMALE) ||
+            (first == Gender.FEMALE && second == Gender.MALE)
+        ) {
+            MarriageKinshipMode.FOLLOW_HUSBAND
+        } else {
+            MarriageKinshipMode.RESPECTIVE
         }
     }
 
@@ -241,7 +295,7 @@ class BackupManager(
     companion object {
         const val MIN_BACKUP_PASSWORD_LENGTH = 6
         const val BACKUP_FORMAT_VERSION = 1
-        const val CURRENT_SCHEMA_VERSION = 4
+        const val CURRENT_SCHEMA_VERSION = 5
         const val MIME_TYPE = "application/octet-stream"
         private const val KDF_ALGORITHM = "PBKDF2WithHmacSHA256"
         private const val CIPHER_TRANSFORMATION = "AES/GCM/NoPadding"

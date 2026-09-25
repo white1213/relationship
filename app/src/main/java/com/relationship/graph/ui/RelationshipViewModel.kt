@@ -11,6 +11,7 @@ import com.relationship.graph.data.local.PersonTagEntity
 import com.relationship.graph.data.local.GraphMode
 import com.relationship.graph.data.local.GraphPositionEntity
 import com.relationship.graph.data.local.Gender
+import com.relationship.graph.data.local.MarriageKinshipMode
 import com.relationship.graph.data.local.AgeComparison
 import com.relationship.graph.data.local.InferenceDismissalEntity
 import com.relationship.graph.data.local.RelationCategory
@@ -240,6 +241,7 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
         toPersonId: String,
         relationTypeId: String,
         note: String,
+        marriageKinshipMode: MarriageKinshipMode,
         existing: RelationshipEntity?,
     ) {
         if (fromPersonId == toPersonId) {
@@ -255,6 +257,7 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
                     toPersonId = toPersonId,
                     relationTypeId = relationTypeId,
                     source = existing?.source ?: RelationshipSource.MANUAL,
+                    marriageKinshipMode = marriageKinshipMode,
                     labelOverride = if (existing?.relationTypeId == relationTypeId) {
                         existing.labelOverride
                     } else {

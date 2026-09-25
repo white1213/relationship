@@ -388,6 +388,7 @@ fun GraphScreen(
                         },
                         showInferenceSuggestions = state.showInferenceSuggestions,
                         displayMode = state.graphDisplayMode,
+                        ageOrders = state.relativeAgeOrders,
                         highlightedPersonIds = highlightedPeople,
                         highlightedEdgeKeys = highlightedEdges,
                         selectedPersonId = selectedPersonId,

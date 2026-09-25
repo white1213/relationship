@@ -45,6 +45,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import com.relationship.graph.data.local.RelationCategory
 import com.relationship.graph.data.local.RelationDirection
+import com.relationship.graph.data.local.MarriageKinshipMode
+import com.relationship.graph.data.FamilyRelationKind
+import com.relationship.graph.data.RelationshipSemantics
 import com.relationship.graph.ui.AppUiState
 import com.relationship.graph.ui.RelationshipViewModel
 import com.relationship.graph.ui.components.AppTopBar
@@ -77,6 +80,9 @@ fun RelationEditorScreen(
         )
     }
     var note by rememberSaveable(existing?.id) { mutableStateOf(existing?.note.orEmpty()) }
+    var marriageKinshipMode by rememberSaveable(existing?.id) {
+        mutableStateOf(existing?.marriageKinshipMode ?: MarriageKinshipMode.RESPECTIVE)
+    }
     var forwardFromFirst by rememberSaveable(existing?.id) {
         mutableStateOf(existing?.fromPersonId != secondPersonId)
     }
@@ -209,6 +215,37 @@ fun RelationEditorScreen(
                 }
             }
 
+            if (relationType?.let(RelationshipSemantics::kind) == FamilyRelationKind.SPOUSE) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("婚后称谓", style = MaterialTheme.typography.labelLarge)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        MarriageKinshipMode.entries.forEach { mode ->
+                            FilterChip(
+                                selected = marriageKinshipMode == mode,
+                                onClick = { marriageKinshipMode = mode },
+                                label = {
+                                    Text(
+                                        when (mode) {
+                                            MarriageKinshipMode.FOLLOW_HUSBAND -> "随夫家"
+                                            MarriageKinshipMode.FOLLOW_WIFE -> "随妻家"
+                                            MarriageKinshipMode.RESPECTIVE -> "各自称呼"
+                                        },
+                                    )
+                                },
+                            )
+                        }
+                    }
+                    Text(
+                        text = "用于生成双方亲属的日常称谓，不修改已录入的血亲关系。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
             OutlinedTextField(
                 value = note,
                 onValueChange = { note = it },
@@ -235,6 +272,7 @@ fun RelationEditorScreen(
                         toPersonId = toPersonId,
                         relationTypeId = type.id,
                         note = note,
+                        marriageKinshipMode = marriageKinshipMode,
                         existing = existing,
                     )
                     onBack()
@@ -256,6 +294,17 @@ fun RelationEditorScreen(
             relationTypes = selectableRelationTypes,
             onSelect = { type ->
                 relationTypeId = type.id
+                if (RelationshipSemantics.kind(type) == FamilyRelationKind.SPOUSE) {
+                    marriageKinshipMode = when {
+                        firstPerson?.gender == com.relationship.graph.data.local.Gender.MALE &&
+                            secondPerson?.gender == com.relationship.graph.data.local.Gender.FEMALE ->
+                            MarriageKinshipMode.FOLLOW_HUSBAND
+                        firstPerson?.gender == com.relationship.graph.data.local.Gender.FEMALE &&
+                            secondPerson?.gender == com.relationship.graph.data.local.Gender.MALE ->
+                            MarriageKinshipMode.FOLLOW_HUSBAND
+                        else -> MarriageKinshipMode.RESPECTIVE
+                    }
+                }
                 typePickerVisible = false
             },
             onAddCustom = {
@@ -301,7 +350,8 @@ private fun RelationTypePickerDialog(
     } else {
         relationTypes.filter {
             it.name.lowercase().contains(normalizedQuery) ||
-                it.inverseName.orEmpty().lowercase().contains(normalizedQuery)
+                it.inverseName.orEmpty().lowercase().contains(normalizedQuery) ||
+                searchAliases(it.id).any { alias -> alias.contains(normalizedQuery) }
         }
     }
 
@@ -363,6 +413,12 @@ private fun RelationTypePickerDialog(
             TextButton(onClick = onDismiss) { Text("取消") }
         },
     )
+}
+
+private fun searchAliases(relationTypeId: String): List<String> = when (relationTypeId) {
+    "preset_biao_cousin" -> listOf("舅舅家子女", "姑姑家子女", "姨妈家子女", "表兄弟", "表姐妹")
+    "preset_tang_cousin" -> listOf("叔叔家子女", "伯父家子女", "大爷家子女", "堂兄弟", "堂姐妹")
+    else -> emptyList()
 }
 
 @Composable

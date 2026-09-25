@@ -44,6 +44,13 @@ class Converters {
         RelationshipSource.valueOf(value)
 
     @TypeConverter
+    fun marriageKinshipModeToString(value: MarriageKinshipMode): String = value.name
+
+    @TypeConverter
+    fun stringToMarriageKinshipMode(value: String): MarriageKinshipMode =
+        MarriageKinshipMode.valueOf(value)
+
+    @TypeConverter
     fun ageComparisonToString(value: AgeComparison): String = value.name
 
     @TypeConverter
@@ -61,7 +68,7 @@ class Converters {
         InferenceDismissalEntity::class,
         RelativeAgeOrderEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -79,7 +86,7 @@ abstract class AppDatabase : RoomDatabase() {
                 "relationship-graph.db",
             )
                 .openHelperFactory(factory)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                 .build()
         }
 
@@ -189,6 +196,62 @@ abstract class AppDatabase : RoomDatabase() {
                 database.execSQL(
                     "CREATE INDEX IF NOT EXISTS `index_relative_age_orders_secondPersonId` " +
                         "ON `relative_age_orders` (`secondPersonId`)",
+                )
+            }
+        }
+
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE `relationships` ADD COLUMN `marriageKinshipMode` " +
+                        "TEXT NOT NULL DEFAULT 'RESPECTIVE'",
+                )
+                database.execSQL(
+                    """
+                    UPDATE `relationships`
+                    SET `marriageKinshipMode` = 'FOLLOW_HUSBAND'
+                    WHERE `relationTypeId` = 'preset_spouse'
+                      AND EXISTS (
+                          SELECT 1 FROM `people` AS `firstPerson`
+                          INNER JOIN `people` AS `secondPerson`
+                              ON `secondPerson`.`id` = `relationships`.`toPersonId`
+                          WHERE `firstPerson`.`id` = `relationships`.`fromPersonId`
+                            AND (
+                                (`firstPerson`.`gender` = 'MALE'
+                                    AND `secondPerson`.`gender` = 'FEMALE')
+                                OR
+                                (`firstPerson`.`gender` = 'FEMALE'
+                                    AND `secondPerson`.`gender` = 'MALE')
+                            )
+                      )
+                    """.trimIndent(),
+                )
+                database.execSQL(
+                    """
+                    UPDATE `relationships`
+                    SET `labelOverride` = NULL,
+                        `inverseLabelOverride` = NULL
+                    WHERE `source` = 'CONFIRMED_INFERENCE'
+                      AND `relationTypeId` = 'preset_sibling_in_law'
+                      AND (
+                          `labelOverride` LIKE '%配偶的%'
+                          OR `inverseLabelOverride` LIKE '%配偶的%'
+                      )
+                    """.trimIndent(),
+                )
+                database.execSQL(
+                    """
+                    UPDATE `relation_types`
+                    SET `name` = '姻亲同辈', `inverseName` = NULL
+                    WHERE `id` = 'preset_sibling_in_law'
+                    """.trimIndent(),
+                )
+                database.execSQL(
+                    """
+                    UPDATE `relation_types`
+                    SET `inverseName` = '侄子/侄女'
+                    WHERE `id` IN ('preset_aunt', 'preset_aunt_husband')
+                    """.trimIndent(),
                 )
             }
         }

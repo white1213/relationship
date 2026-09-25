@@ -9,7 +9,10 @@ import com.relationship.graph.data.ai.AiActionPayload
 import com.relationship.graph.data.ai.AiPersonPayload
 import com.relationship.graph.data.ai.AiRelationshipPayload
 import com.relationship.graph.data.ai.AiSettings
+import com.relationship.graph.data.FamilyRelationKind
+import com.relationship.graph.data.RelationshipSemantics
 import com.relationship.graph.data.local.Gender
+import com.relationship.graph.data.local.MarriageKinshipMode
 import com.relationship.graph.data.local.PersonEntity
 import com.relationship.graph.data.local.RelationshipEntity
 import com.relationship.graph.data.local.RelationshipSource
@@ -217,11 +220,11 @@ class AiAssistantViewModel(application: Application) : AndroidViewModel(applicat
             ?: error("缺少关系终点")
         val relationTypeId = relationship.relationTypeId?.takeIf(String::isNotBlank)
             ?: error("缺少关系类型")
-        require(repository.getPerson(fromPersonId) != null) { "关系起点不存在" }
-        require(repository.getPerson(toPersonId) != null) { "关系终点不存在" }
-        require(
-            repository.relationTypes.first().any { it.id == relationTypeId },
-        ) { "关系类型不存在" }
+        val fromPerson = repository.getPerson(fromPersonId) ?: error("关系起点不存在")
+        val toPerson = repository.getPerson(toPersonId) ?: error("关系终点不存在")
+        val relationType = repository.relationTypes.first().firstOrNull {
+            it.id == relationTypeId
+        } ?: error("关系类型不存在")
         repository.saveRelationship(
             RelationshipEntity(
                 id = UUID.randomUUID().toString(),
@@ -229,6 +232,13 @@ class AiAssistantViewModel(application: Application) : AndroidViewModel(applicat
                 toPersonId = toPersonId,
                 relationTypeId = relationTypeId,
                 source = RelationshipSource.MANUAL,
+                marriageKinshipMode = if (
+                    RelationshipSemantics.kind(relationType) == FamilyRelationKind.SPOUSE
+                ) {
+                    defaultMarriageMode(fromPerson.gender, toPerson.gender)
+                } else {
+                    MarriageKinshipMode.RESPECTIVE
+                },
                 note = relationship.note.orEmpty(),
             ),
         )
@@ -239,14 +249,40 @@ class AiAssistantViewModel(application: Application) : AndroidViewModel(applicat
         val relationshipId = relationshipPayload.id?.takeIf(String::isNotBlank)
             ?: error("缺少关系 ID")
         val existing = repository.getRelationship(relationshipId) ?: error("关系不存在")
+        val fromPersonId = relationshipPayload.fromPersonId?.takeIf(String::isNotBlank)
+            ?: existing.fromPersonId
+        val toPersonId = relationshipPayload.toPersonId?.takeIf(String::isNotBlank)
+            ?: existing.toPersonId
+        val relationTypeId = relationshipPayload.relationTypeId?.takeIf(String::isNotBlank)
+            ?: existing.relationTypeId
+        val relationType = repository.relationTypes.first().firstOrNull {
+            it.id == relationTypeId
+        } ?: error("关系类型不存在")
+        val fromPerson = repository.getPerson(fromPersonId) ?: error("关系起点不存在")
+        val toPerson = repository.getPerson(toPersonId) ?: error("关系终点不存在")
         repository.saveRelationship(
             existing.copy(
-                fromPersonId = relationshipPayload.fromPersonId?.takeIf(String::isNotBlank)
-                    ?: existing.fromPersonId,
-                toPersonId = relationshipPayload.toPersonId?.takeIf(String::isNotBlank)
-                    ?: existing.toPersonId,
-                relationTypeId = relationshipPayload.relationTypeId?.takeIf(String::isNotBlank)
-                    ?: existing.relationTypeId,
+                fromPersonId = fromPersonId,
+                toPersonId = toPersonId,
+                relationTypeId = relationTypeId,
+                marriageKinshipMode = if (
+                    RelationshipSemantics.kind(relationType) == FamilyRelationKind.SPOUSE
+                ) {
+                    if (
+                        existing.relationTypeId == relationTypeId &&
+                        RelationshipSemantics.kind(
+                            repository.relationTypes.first().firstOrNull {
+                                it.id == existing.relationTypeId
+                            },
+                        ) == FamilyRelationKind.SPOUSE
+                    ) {
+                        existing.marriageKinshipMode
+                    } else {
+                        defaultMarriageMode(fromPerson.gender, toPerson.gender)
+                    }
+                } else {
+                    existing.marriageKinshipMode
+                },
                 note = relationshipPayload.note ?: existing.note,
             ),
         )
@@ -322,6 +358,7 @@ class AiAssistantViewModel(application: Application) : AndroidViewModel(applicat
                     "toPersonId" to it.toPersonId,
                     "relationTypeId" to it.relationTypeId,
                     "source" to it.source.name,
+                    "marriageKinshipMode" to it.marriageKinshipMode.name,
                     "labelOverride" to it.labelOverride,
                     "inverseLabelOverride" to it.inverseLabelOverride,
                 )
@@ -361,4 +398,14 @@ class AiAssistantViewModel(application: Application) : AndroidViewModel(applicat
         "FEMALE" -> Gender.FEMALE
         else -> Gender.UNSPECIFIED
     }
+
+    private fun defaultMarriageMode(first: Gender, second: Gender): MarriageKinshipMode =
+        if (
+            (first == Gender.MALE && second == Gender.FEMALE) ||
+            (first == Gender.FEMALE && second == Gender.MALE)
+        ) {
+            MarriageKinshipMode.FOLLOW_HUSBAND
+        } else {
+            MarriageKinshipMode.RESPECTIVE
+        }
 }

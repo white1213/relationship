@@ -158,11 +158,14 @@ class RelationshipRepository(
     )
 
     suspend fun replaceAll(data: GraphData) {
+        val existingTypeIds = data.relationTypes.mapTo(mutableSetOf()) { it.id }
+        val mergedRelationTypes = data.relationTypes +
+            PresetRelationTypes.all.filter { it.id !in existingTypeIds }
         dao.replaceAll(
             people = data.people,
             tags = data.tags,
             personTags = data.personTags,
-            relationTypes = data.relationTypes,
+            relationTypes = mergedRelationTypes,
             relationships = data.relationships,
             graphPositions = data.graphPositions,
             inferenceDismissals = data.inferenceDismissals,

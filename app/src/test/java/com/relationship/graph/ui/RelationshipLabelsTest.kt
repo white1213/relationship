@@ -172,4 +172,86 @@ class RelationshipLabelsTest {
             ),
         )
     }
+
+    @Test
+    fun motherDaughterTypeKeepsFixedDirectionalNames() {
+        val type = RelationTypeEntity(
+            id = "preset_mother_daughter",
+            name = "母亲",
+            inverseName = "女儿",
+            category = RelationCategory.FAMILY,
+            direction = RelationDirection.DIRECTED,
+            isBuiltIn = true,
+        )
+        val mother = PersonEntity(id = "mother", name = "母亲")
+        val daughter = PersonEntity(id = "daughter", name = "女儿")
+        val relationship = RelationshipEntity(
+            id = "mother-daughter",
+            fromPersonId = mother.id,
+            toPersonId = daughter.id,
+            relationTypeId = type.id,
+        )
+
+        assertEquals(
+            "母亲",
+            relationshipLabelForPerson(
+                relationship,
+                type,
+                daughter.id,
+                otherPerson = mother,
+                people = listOf(mother, daughter),
+            ),
+        )
+        assertEquals(
+            "女儿",
+            relationshipLabelForPerson(
+                relationship,
+                type,
+                mother.id,
+                otherPerson = daughter,
+                people = listOf(mother, daughter),
+            ),
+        )
+    }
+
+    @Test
+    fun auntAndAuntHusbandUseGenderedNieceNephewLabels() {
+        val auntType = RelationTypeEntity(
+            id = "preset_aunt",
+            name = "姑姑",
+            inverseName = "侄子/侄女",
+            category = RelationCategory.FAMILY,
+            direction = RelationDirection.DIRECTED,
+            isBuiltIn = true,
+        )
+        val aunt = PersonEntity(id = "aunt", name = "姑姑", gender = Gender.FEMALE)
+        val nephew = PersonEntity(id = "nephew", name = "侄子", gender = Gender.MALE)
+        val relationship = RelationshipEntity(
+            id = "aunt-nephew",
+            fromPersonId = aunt.id,
+            toPersonId = nephew.id,
+            relationTypeId = auntType.id,
+        )
+
+        assertEquals(
+            "姑姑",
+            relationshipLabelForPerson(
+                relationship,
+                auntType,
+                nephew.id,
+                otherPerson = aunt,
+                people = listOf(aunt, nephew),
+            ),
+        )
+        assertEquals(
+            "侄子",
+            relationshipLabelForPerson(
+                relationship,
+                auntType,
+                aunt.id,
+                otherPerson = nephew,
+                people = listOf(aunt, nephew),
+            ),
+        )
+    }
 }

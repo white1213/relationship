@@ -117,6 +117,12 @@ enum class RelationshipSource {
     CONFIRMED_INFERENCE,
 }
 
+enum class MarriageKinshipMode {
+    FOLLOW_HUSBAND,
+    FOLLOW_WIFE,
+    RESPECTIVE,
+}
+
 @Entity(
     tableName = "relationships",
     foreignKeys = [
@@ -152,6 +158,8 @@ data class RelationshipEntity(
     val relationTypeId: String,
     @ColumnInfo(defaultValue = "'MANUAL'")
     val source: RelationshipSource = RelationshipSource.MANUAL,
+    @ColumnInfo(defaultValue = "'RESPECTIVE'")
+    val marriageKinshipMode: MarriageKinshipMode = MarriageKinshipMode.RESPECTIVE,
     val labelOverride: String? = null,
     val inverseLabelOverride: String? = null,
     val note: String = "",
@@ -239,6 +247,60 @@ object PresetRelationTypes {
             isBuiltIn = true,
         ),
         RelationTypeEntity(
+            id = "preset_mother_daughter",
+            name = "母亲",
+            inverseName = "女儿",
+            category = RelationCategory.FAMILY,
+            direction = RelationDirection.DIRECTED,
+            isBuiltIn = true,
+        ),
+        RelationTypeEntity(
+            id = "preset_older_sister",
+            name = "姐姐",
+            inverseName = "妹妹/弟弟",
+            category = RelationCategory.FAMILY,
+            direction = RelationDirection.DIRECTED,
+            isBuiltIn = true,
+        ),
+        RelationTypeEntity(
+            id = "preset_brother_in_law",
+            name = "姐夫",
+            inverseName = "小舅子/小姨子",
+            category = RelationCategory.FAMILY,
+            direction = RelationDirection.DIRECTED,
+            isBuiltIn = true,
+        ),
+        RelationTypeEntity(
+            id = "preset_aunt",
+            name = "姑姑",
+            inverseName = "侄子/侄女",
+            category = RelationCategory.FAMILY,
+            direction = RelationDirection.DIRECTED,
+            isBuiltIn = true,
+        ),
+        RelationTypeEntity(
+            id = "preset_aunt_husband",
+            name = "姑父",
+            inverseName = "侄子/侄女",
+            category = RelationCategory.FAMILY,
+            direction = RelationDirection.DIRECTED,
+            isBuiltIn = true,
+        ),
+        RelationTypeEntity(
+            id = "preset_biao_cousin",
+            name = "表兄弟姐妹",
+            category = RelationCategory.FAMILY,
+            direction = RelationDirection.BIDIRECTIONAL,
+            isBuiltIn = true,
+        ),
+        RelationTypeEntity(
+            id = "preset_tang_cousin",
+            name = "堂兄弟姐妹",
+            category = RelationCategory.FAMILY,
+            direction = RelationDirection.BIDIRECTIONAL,
+            isBuiltIn = true,
+        ),
+        RelationTypeEntity(
             id = InferenceRelationTypeIds.GRANDPARENT,
             name = "祖父母",
             inverseName = "孙辈",
@@ -284,7 +346,7 @@ object PresetRelationTypes {
         ),
         RelationTypeEntity(
             id = InferenceRelationTypeIds.SIBLING_IN_LAW,
-            name = "兄弟姐妹的配偶",
+            name = "姻亲同辈",
             category = RelationCategory.FAMILY,
             direction = RelationDirection.BIDIRECTIONAL,
             isBuiltIn = true,

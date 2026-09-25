@@ -293,7 +293,7 @@ class InferenceEngineTest {
     }
 
     @Test
-    fun fallsBackToNeutralSiblingInLawNamesWithoutBirthday() {
+    fun siblingInLawLabelsUseCombinedNamesWithoutBirthday() {
         val people = listOf(
             person("wife", "妻子", Gender.FEMALE),
             person("husband", "丈夫", Gender.MALE),
@@ -315,8 +315,86 @@ class InferenceEngineTest {
             setOf(it.fromPersonId, it.toPersonId) == setOf("wife", "brother")
         }
 
-        assertTrue(candidate.labelFor("wife") in setOf("配偶的兄弟", "配偶的兄弟姐妹"))
-        assertTrue(candidate.labelFor("brother") in setOf("兄弟姐妹的配偶", "兄弟的配偶"))
+        assertEquals("大伯子/小叔子", candidate.labelFor("wife"))
+        assertEquals("嫂子/弟妹", candidate.labelFor("brother"))
+    }
+
+    @Test
+    fun motherDaughterSingleDirectionParticipatesInFamilyInference() {
+        val motherDaughter = "preset_mother_daughter"
+        val people = listOf(
+            person("grandparent", "外祖父母"),
+            person("mother", "母亲", Gender.FEMALE),
+            person("aunt", "姨妈", Gender.FEMALE),
+            person("daughter", "女儿", Gender.FEMALE),
+        )
+        val relationships = listOf(
+            relationship("gp-mother", "grandparent", "mother", motherDaughter),
+            relationship("gp-aunt", "grandparent", "aunt", motherDaughter),
+            relationship("mother-daughter", "mother", "daughter", motherDaughter),
+        )
+
+        val candidates = infer(people, relationships)
+
+        assertTrue(
+            candidates.any {
+                it.rule == InferenceRule.AUNT_UNCLE &&
+                    it.fromPersonId == "aunt" &&
+                    it.toPersonId == "daughter" &&
+                    it.labelFor("aunt") == "姨妈"
+            },
+        )
+    }
+
+    @Test
+    fun wifeCanFollowHusbandToHisCousin() {
+        val people = listOf(
+            person("wife", "妻子", Gender.FEMALE),
+            person("husband", "丈夫", Gender.MALE, "1990-01-01"),
+            person("grandparent", "祖父母"),
+            person("husbandFather", "公公", Gender.MALE),
+            person("uncle", "叔叔", Gender.MALE),
+            person("cousin", "堂弟", Gender.MALE, "2000-01-01"),
+        )
+        val relationships = listOf(
+            relationship("marriage", "husband", "wife", spouse).copy(
+                marriageKinshipMode = com.relationship.graph.data.local.MarriageKinshipMode.FOLLOW_HUSBAND,
+            ),
+            relationship("gp-father", "grandparent", "husbandFather", parentChild),
+            relationship("gp-uncle", "grandparent", "uncle", parentChild),
+            relationship("father-husband", "husbandFather", "husband", parentChild),
+            relationship("uncle-cousin", "uncle", "cousin", parentChild),
+        )
+
+        val candidate = infer(people, relationships).single {
+            setOf(it.fromPersonId, it.toPersonId) == setOf("wife", "cousin")
+        }
+
+        assertEquals("堂弟", candidate.labelFor("wife"))
+    }
+
+    @Test
+    fun followWifeUsesWifeSideSiblingNames() {
+        val people = listOf(
+            person("husband", "丈夫", Gender.MALE),
+            person("wife", "妻子", Gender.FEMALE, "1990-01-01"),
+            person("wifeOlderBrother", "哥哥", Gender.MALE, "1985-01-01"),
+            person("grandparent", "父母"),
+        )
+        val relationships = listOf(
+            relationship("marriage", "husband", "wife", spouse).copy(
+                marriageKinshipMode = com.relationship.graph.data.local.MarriageKinshipMode.FOLLOW_WIFE,
+            ),
+            relationship("parent1", "grandparent", "wife", parentChild),
+            relationship("parent2", "grandparent", "wifeOlderBrother", parentChild),
+        )
+
+        val candidate = infer(people, relationships).single {
+            setOf(it.fromPersonId, it.toPersonId) == setOf("husband", "wifeOlderBrother")
+        }
+
+        assertEquals("哥哥", candidate.labelFor("husband"))
+        assertEquals("妹夫", candidate.labelFor("wifeOlderBrother"))
     }
 
     @Test
@@ -472,6 +550,40 @@ class InferenceEngineTest {
 
         assertEquals("哥哥", candidate.labelFor("a"))
         assertEquals("弟弟", candidate.labelFor("b"))
+    }
+
+    @Test
+    fun manualAgeOrderCanResolveAgeTransitively() {
+        val people = listOf(
+            person("parent", "父母"),
+            person("a", "甲", Gender.MALE),
+            person("b", "乙", Gender.MALE),
+            person("c", "丙", Gender.MALE),
+        )
+        val relationships = people
+            .filter { it.id != "parent" }
+            .mapIndexed { index, person ->
+                relationship("edge$index", "parent", person.id, parentChild)
+            }
+        val ageOrders = listOf(
+            RelativeAgeOrderEntity(
+                firstPersonId = "a",
+                secondPersonId = "b",
+                comparison = AgeComparison.FIRST_OLDER,
+            ),
+            RelativeAgeOrderEntity(
+                firstPersonId = "b",
+                secondPersonId = "c",
+                comparison = AgeComparison.FIRST_OLDER,
+            ),
+        )
+
+        val candidate = infer(people, relationships, ageOrders).single {
+            setOf(it.fromPersonId, it.toPersonId) == setOf("a", "c")
+        }
+
+        assertEquals("哥哥", candidate.labelFor("a"))
+        assertEquals("弟弟", candidate.labelFor("c"))
     }
 
     private fun infer(

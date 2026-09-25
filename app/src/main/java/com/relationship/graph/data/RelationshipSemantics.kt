@@ -10,6 +10,10 @@ enum class FamilyRelationKind {
     PARENT_CHILD,
     SPOUSE,
     SIBLING,
+    AUNT_UNCLE,
+    AUNT_UNCLE_IN_LAW,
+    SIBLING_IN_LAW,
+    COUSIN,
     OTHER,
 }
 
@@ -25,11 +29,24 @@ object RelationshipSemantics {
         if (type == null) return FamilyRelationKind.OTHER
         return when {
             type.id == "preset_parent_child" -> FamilyRelationKind.PARENT_CHILD
+            type.id == "preset_mother_daughter" -> FamilyRelationKind.PARENT_CHILD
             type.id == "preset_spouse" -> FamilyRelationKind.SPOUSE
             type.id == "preset_sibling" -> FamilyRelationKind.SIBLING
+            type.id == "preset_older_sister" -> FamilyRelationKind.SIBLING
+            type.id == "preset_brother_in_law" -> FamilyRelationKind.SIBLING_IN_LAW
+            type.id == "preset_aunt" -> FamilyRelationKind.AUNT_UNCLE
+            type.id == "preset_aunt_husband" -> FamilyRelationKind.AUNT_UNCLE_IN_LAW
+            type.id == "preset_biao_cousin" -> FamilyRelationKind.COUSIN
+            type.id == "preset_tang_cousin" -> FamilyRelationKind.COUSIN
             isParentChildName(type) -> FamilyRelationKind.PARENT_CHILD
             normalize(type.name) in SPOUSE_NAMES -> FamilyRelationKind.SPOUSE
             normalize(type.name) in SIBLING_NAMES -> FamilyRelationKind.SIBLING
+            normalize(type.name) in AUNT_UNCLE_NAMES -> FamilyRelationKind.AUNT_UNCLE
+            normalize(type.name) in AUNT_UNCLE_IN_LAW_NAMES ->
+                FamilyRelationKind.AUNT_UNCLE_IN_LAW
+            normalize(type.name) in SIBLING_IN_LAW_NAMES ->
+                FamilyRelationKind.SIBLING_IN_LAW
+            normalize(type.name) in COUSIN_NAMES -> FamilyRelationKind.COUSIN
             else -> FamilyRelationKind.OTHER
         }
     }
@@ -42,7 +59,7 @@ object RelationshipSemantics {
         val name = normalize(type.name)
         val inverseName = normalize(type.inverseName.orEmpty())
         val parentIsFrom = when {
-            type.id == "preset_parent_child" -> true
+            type.id == "preset_parent_child" || type.id == "preset_mother_daughter" -> true
             name in CHILD_NAMES && inverseName in PARENT_NAMES -> false
             name in CHILD_NAMES && inverseName.isBlank() -> false
             else -> true
@@ -172,6 +189,53 @@ object RelationshipSemantics {
         "弟弟",
         "姐姐",
         "妹妹",
+    )
+
+    private val AUNT_UNCLE_NAMES = setOf(
+        "大爷",
+        "伯父",
+        "伯伯",
+        "叔叔",
+        "叔父",
+        "姑姑",
+        "姑母",
+        "舅舅",
+        "姨妈",
+        "姨母",
+    )
+
+    private val AUNT_UNCLE_IN_LAW_NAMES = setOf(
+        "大娘",
+        "伯母",
+        "婶",
+        "婶婶",
+        "婶母",
+        "姑父",
+        "舅妈",
+        "姨父",
+    )
+
+    private val SIBLING_IN_LAW_NAMES = setOf(
+        "嫂子",
+        "弟妹",
+        "弟媳",
+        "姐夫",
+        "妹夫",
+    )
+
+    private val COUSIN_NAMES = setOf(
+        "堂兄弟姐妹",
+        "堂表亲",
+        "表兄弟姐妹",
+        "堂兄",
+        "堂哥",
+        "堂弟",
+        "堂姐",
+        "堂妹",
+        "表哥",
+        "表弟",
+        "表姐",
+        "表妹",
     )
 
     private val OLDER_SIBLING_NAMES = setOf(

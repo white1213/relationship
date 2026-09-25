@@ -36,10 +36,12 @@ import com.relationship.graph.data.local.RelationCategory
 import com.relationship.graph.data.RelationshipSemantics
 import com.relationship.graph.data.local.GraphMode
 import com.relationship.graph.data.local.GraphPositionEntity
+import com.relationship.graph.data.local.RelativeAgeOrderEntity
 import com.relationship.graph.data.local.PersonEntity
 import com.relationship.graph.data.local.RelationTypeEntity
 import com.relationship.graph.data.local.RelationshipEntity
 import com.relationship.graph.data.inference.InferredRelationshipCandidate
+import com.relationship.graph.ui.relationshipLabelForPerson
 import com.relationship.graph.data.preferences.GraphDisplayMode
 import kotlin.math.max
 import kotlin.math.min
@@ -78,6 +80,7 @@ fun GraphCanvas(
     inferenceCandidates: List<InferredRelationshipCandidate>,
     showInferenceSuggestions: Boolean,
     displayMode: GraphDisplayMode,
+    ageOrders: List<RelativeAgeOrderEntity>,
     highlightedPersonIds: Set<String>?,
     highlightedEdgeKeys: Set<String>?,
     selectedPersonId: String?,
@@ -726,13 +729,39 @@ fun GraphCanvas(
                     .mapNotNull { relationshipToGroup[it] }
                     .flatMap { group ->
                         group.relationships.map { relationship ->
-                            relationship.labelOverride
-                                ?: group.relationTypes.firstOrNull {
-                                    it.id == relationship.relationTypeId
-                                }?.name
-                                .orEmpty()
+                            val override = relationship.labelOverride
+                            if (!override.isNullOrBlank()) return@map listOf(override)
+                            val type = group.relationTypes.firstOrNull {
+                                it.id == relationship.relationTypeId
+                            } ?: return@map emptyList()
+                            val byId = people.associateBy { it.id }
+                            val from = byId[relationship.fromPersonId]
+                            val to = byId[relationship.toPersonId]
+                            listOfNotNull(
+                                from?.let {
+                                    relationshipLabelForPerson(
+                                        relationship = relationship,
+                                        type = type,
+                                        personId = it.id,
+                                        otherPerson = to,
+                                        people = people,
+                                        ageOrders = ageOrders,
+                                    )
+                                },
+                                to?.let {
+                                    relationshipLabelForPerson(
+                                        relationship = relationship,
+                                        type = type,
+                                        personId = it.id,
+                                        otherPerson = from,
+                                        people = people,
+                                        ageOrders = ageOrders,
+                                    )
+                                },
+                            ).distinct()
                         }
                     }
+                    .flatten()
                     .filter(String::isNotBlank)
                     .distinct()
                     .joinToString("/")
