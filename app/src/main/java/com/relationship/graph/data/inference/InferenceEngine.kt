@@ -24,7 +24,7 @@ enum class InferenceConfirmationMode {
     AS_STEP_CHILD,
 }
 
-private enum class RelativeAge {
+internal enum class RelativeAge {
     OLDER,
     YOUNGER,
     UNKNOWN,
@@ -121,7 +121,6 @@ object InferenceEngine {
     ): List<InferredRelationshipCandidate> {
         if (people.size < 2) return emptyList()
         val peopleById = people.associateBy { it.id }
-        val ageResolver = RelativeAgeResolver(peopleById, ageOrders)
         val typeById = relationTypes.associateBy { it.id }
         val familyRelationships = relationships.filter {
             RelationshipSemantics.isFamilyLike(typeById[it.relationTypeId])
@@ -135,6 +134,22 @@ object InferenceEngine {
         val siblingRelationships = familyRelationships.filter {
             RelationshipSemantics.kind(typeById[it.relationTypeId]) == FamilyRelationKind.SIBLING
         }
+        val inferredSiblingAgeOrders = siblingRelationships.mapNotNull { relationship ->
+            RelationshipSemantics.siblingAgeOrder(
+                relationship,
+                typeById[relationship.relationTypeId],
+            )?.let { (firstPersonId, secondPersonId, comparison) ->
+                RelativeAgeOrderEntity(
+                    firstPersonId = firstPersonId,
+                    secondPersonId = secondPersonId,
+                    comparison = comparison,
+                )
+            }
+        }
+        val ageResolver = RelativeAgeResolver(
+            peopleById,
+            ageOrders + inferredSiblingAgeOrders,
+        )
         val parentsByChild = parentChildEdges.groupBy { it.childPersonId }
         val childrenByParent = parentChildEdges.groupBy { it.parentPersonId }
         val spousesByPerson = buildSymmetricMap(spouseRelationships)
@@ -932,7 +947,7 @@ object InferenceEngine {
 
 }
 
-private class RelativeAgeResolver(
+internal class RelativeAgeResolver(
     private val peopleById: Map<String, PersonEntity>,
     ageOrders: List<RelativeAgeOrderEntity>,
 ) {

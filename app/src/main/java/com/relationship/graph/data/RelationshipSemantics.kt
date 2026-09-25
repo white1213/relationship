@@ -1,6 +1,7 @@
 package com.relationship.graph.data
 
 import com.relationship.graph.data.local.RelationCategory
+import com.relationship.graph.data.local.AgeComparison
 import com.relationship.graph.data.local.Gender
 import com.relationship.graph.data.local.RelationTypeEntity
 import com.relationship.graph.data.local.RelationshipEntity
@@ -65,7 +66,33 @@ object RelationshipSemantics {
 
     fun isFamilyLike(type: RelationTypeEntity?): Boolean =
         type?.category == RelationCategory.FAMILY ||
-            kind(type) != FamilyRelationKind.OTHER
+            kind(type) != FamilyRelationKind.OTHER ||
+            type?.let { normalize(it.name) in IN_LAW_NAMES } == true
+
+    fun siblingAgeOrder(
+        relationship: RelationshipEntity,
+        type: RelationTypeEntity?,
+    ): Triple<String, String, AgeComparison>? {
+        if (type == null || kind(type) != FamilyRelationKind.SIBLING) return null
+        val name = normalize(type.name)
+        val comparison = when {
+            name in OLDER_SIBLING_NAMES -> AgeComparison.FIRST_OLDER
+            name in YOUNGER_SIBLING_NAMES -> AgeComparison.SECOND_OLDER
+            else -> return null
+        }
+        val first = minOf(relationship.fromPersonId, relationship.toPersonId)
+        val second = maxOf(relationship.fromPersonId, relationship.toPersonId)
+        val normalizedComparison = if (first == relationship.fromPersonId) {
+            comparison
+        } else {
+            when (comparison) {
+                AgeComparison.FIRST_OLDER -> AgeComparison.SECOND_OLDER
+                AgeComparison.SECOND_OLDER -> AgeComparison.FIRST_OLDER
+                AgeComparison.SAME_AGE -> AgeComparison.SAME_AGE
+            }
+        }
+        return Triple(first, second, normalizedComparison)
+    }
 
     private fun isParentChildName(type: RelationTypeEntity): Boolean {
         val name = normalize(type.name)
@@ -141,5 +168,41 @@ object RelationshipSemantics {
         "妹妹",
         "兄妹",
         "姐弟",
+        "哥哥",
+        "弟弟",
+        "姐姐",
+        "妹妹",
+    )
+
+    private val OLDER_SIBLING_NAMES = setOf(
+        "哥哥",
+        "姐姐",
+    )
+
+    private val YOUNGER_SIBLING_NAMES = setOf(
+        "弟弟",
+        "妹妹",
+    )
+
+    private val IN_LAW_NAMES = setOf(
+        "嫂子",
+        "弟妹",
+        "弟媳",
+        "姐夫",
+        "妹夫",
+        "大娘",
+        "婶婶",
+        "婶母",
+        "姑父",
+        "舅妈",
+        "姨父",
+        "大伯子",
+        "小叔子",
+        "大姑子",
+        "小姑子",
+        "大舅子",
+        "小舅子",
+        "大姨子",
+        "小姨子",
     )
 }

@@ -3,6 +3,9 @@ package com.relationship.graph.data.inference
 import com.relationship.graph.data.local.RelationDirection
 import com.relationship.graph.data.local.RelationTypeEntity
 import com.relationship.graph.data.local.RelationshipEntity
+import com.relationship.graph.data.local.PersonEntity
+import com.relationship.graph.data.local.RelativeAgeOrderEntity
+import com.relationship.graph.ui.relationshipLabelForPerson
 
 data class KinshipQueryResult(
     val referenceCallsTarget: String,
@@ -19,6 +22,8 @@ object KinshipQueryEngine {
         relationships: List<RelationshipEntity>,
         relationTypes: List<RelationTypeEntity>,
         inferredCandidates: List<InferredRelationshipCandidate>,
+        people: List<PersonEntity> = emptyList(),
+        ageOrders: List<RelativeAgeOrderEntity> = emptyList(),
     ): KinshipQueryResult? {
         if (referencePersonId == targetPersonId) {
             return KinshipQueryResult(
@@ -35,23 +40,29 @@ object KinshipQueryEngine {
                 setOf(referencePersonId, targetPersonId)
         }
         if (direct.isNotEmpty()) {
-            val directLabels = direct.mapNotNull { relationship ->
+            val peopleById = people.associateBy { it.id }
+            val referenceLabels = direct.mapNotNull { relationship ->
                 typeById[relationship.relationTypeId]?.let { type ->
-                    relationship to endpointLabels(relationship, type)
-                }
-            }
-            val referenceLabels = directLabels.map { (relationship, labels) ->
-                if (relationship.fromPersonId == targetPersonId) {
-                    labels.first
-                } else {
-                    labels.second
+                    relationshipLabelForPerson(
+                        relationship = relationship,
+                        type = type,
+                        personId = referencePersonId,
+                        otherPerson = peopleById[targetPersonId],
+                        people = people,
+                        ageOrders = ageOrders,
+                    )
                 }
             }.distinct()
-            val targetLabels = directLabels.map { (relationship, labels) ->
-                if (relationship.fromPersonId == referencePersonId) {
-                    labels.first
-                } else {
-                    labels.second
+            val targetLabels = direct.mapNotNull { relationship ->
+                typeById[relationship.relationTypeId]?.let { type ->
+                    relationshipLabelForPerson(
+                        relationship = relationship,
+                        type = type,
+                        personId = targetPersonId,
+                        otherPerson = peopleById[referencePersonId],
+                        people = people,
+                        ageOrders = ageOrders,
+                    )
                 }
             }.distinct()
             if (referenceLabels.isNotEmpty()) {
@@ -78,23 +89,4 @@ object KinshipQueryEngine {
         )
     }
 
-    private fun endpointLabels(
-        relationship: RelationshipEntity,
-        type: RelationTypeEntity,
-    ): Pair<String, String> {
-        if (type.direction == RelationDirection.BIDIRECTIONAL) {
-            return (
-                relationship.labelOverride ?: type.name
-                ) to (
-                relationship.inverseLabelOverride
-                    ?: relationship.labelOverride
-                    ?: type.name
-                )
-        }
-        val fromLabel = relationship.labelOverride ?: type.name
-        val toLabel = relationship.inverseLabelOverride
-            ?: type.inverseName
-            ?: type.name
-        return fromLabel to toLabel
-    }
 }

@@ -74,6 +74,8 @@ fun KinshipQueryScreen(state: AppUiState) {
                 relationships = state.relationships,
                 relationTypes = state.relationTypes,
                 inferredCandidates = state.inferredCandidates,
+                people = state.people,
+                ageOrders = state.relativeAgeOrders,
             )
         } else {
             null

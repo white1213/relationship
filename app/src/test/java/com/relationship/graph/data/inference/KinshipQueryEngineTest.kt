@@ -2,6 +2,7 @@ package com.relationship.graph.data.inference
 
 import com.relationship.graph.data.local.PresetRelationTypes
 import com.relationship.graph.data.local.RelationshipEntity
+import com.relationship.graph.data.local.PersonEntity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -24,6 +25,10 @@ class KinshipQueryEngineTest {
             relationships = listOf(relationship),
             relationTypes = PresetRelationTypes.all,
             inferredCandidates = emptyList(),
+            people = listOf(
+                PersonEntity(id = "parent", name = "父母"),
+                PersonEntity(id = "child", name = "子女"),
+            ),
         )
 
         assertEquals("父母", result?.referenceCallsTarget)
