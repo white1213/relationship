@@ -186,9 +186,42 @@ data class InferenceDismissalEntity(
     val dismissedAt: Long = System.currentTimeMillis(),
 )
 
+enum class AgeComparison {
+    FIRST_OLDER,
+    SECOND_OLDER,
+    SAME_AGE,
+}
+
+@Entity(
+    tableName = "relative_age_orders",
+    primaryKeys = ["firstPersonId", "secondPersonId"],
+    foreignKeys = [
+        ForeignKey(
+            entity = PersonEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["firstPersonId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+        ForeignKey(
+            entity = PersonEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["secondPersonId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("firstPersonId"), Index("secondPersonId")],
+)
+data class RelativeAgeOrderEntity(
+    val firstPersonId: String,
+    val secondPersonId: String,
+    val comparison: AgeComparison,
+    val updatedAt: Long = System.currentTimeMillis(),
+)
+
 object InferenceRelationTypeIds {
     const val GRANDPARENT = "preset_grandparent"
     const val AUNT_UNCLE = "preset_aunt_uncle"
+    const val AUNT_UNCLE_IN_LAW = "preset_aunt_uncle_in_law"
     const val COUSIN = "preset_cousin"
     const val IN_LAW = "preset_in_law"
     const val SIBLING_IN_LAW = "preset_sibling_in_law"
@@ -216,7 +249,16 @@ object PresetRelationTypes {
         ),
         RelationTypeEntity(
             id = InferenceRelationTypeIds.AUNT_UNCLE,
-            name = "叔伯/舅姨",
+            name = "大爷/叔伯/舅姨",
+            inverseName = "侄辈/外甥辈",
+            category = RelationCategory.FAMILY,
+            direction = RelationDirection.DIRECTED,
+            isBuiltIn = true,
+            isInferenceOnly = true,
+        ),
+        RelationTypeEntity(
+            id = InferenceRelationTypeIds.AUNT_UNCLE_IN_LAW,
+            name = "大爷/叔伯/舅姨的配偶",
             inverseName = "侄辈/外甥辈",
             category = RelationCategory.FAMILY,
             direction = RelationDirection.DIRECTED,

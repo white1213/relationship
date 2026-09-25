@@ -33,6 +33,9 @@ interface RelationshipDao {
     @Query("SELECT * FROM inference_dismissals")
     fun observeInferenceDismissals(): Flow<List<InferenceDismissalEntity>>
 
+    @Query("SELECT * FROM relative_age_orders ORDER BY firstPersonId, secondPersonId")
+    fun observeRelativeAgeOrders(): Flow<List<RelativeAgeOrderEntity>>
+
     @Query("SELECT * FROM people")
     suspend fun getAllPeople(): List<PersonEntity>
 
@@ -53,6 +56,9 @@ interface RelationshipDao {
 
     @Query("SELECT * FROM inference_dismissals")
     suspend fun getAllInferenceDismissals(): List<InferenceDismissalEntity>
+
+    @Query("SELECT * FROM relative_age_orders")
+    suspend fun getAllRelativeAgeOrders(): List<RelativeAgeOrderEntity>
 
     @Query("SELECT COUNT(*) FROM relation_types")
     suspend fun relationTypeCount(): Int
@@ -124,6 +130,12 @@ interface RelationshipDao {
     @Upsert
     suspend fun upsertInferenceDismissals(dismissals: List<InferenceDismissalEntity>)
 
+    @Upsert
+    suspend fun upsertRelativeAgeOrder(order: RelativeAgeOrderEntity)
+
+    @Upsert
+    suspend fun upsertRelativeAgeOrders(orders: List<RelativeAgeOrderEntity>)
+
     @Query(
         "DELETE FROM inference_dismissals WHERE fromPersonId = :fromPersonId " +
             "AND toPersonId = :toPersonId AND ruleId = :ruleId",
@@ -133,6 +145,12 @@ interface RelationshipDao {
         toPersonId: String,
         ruleId: String,
     )
+
+    @Query(
+        "DELETE FROM relative_age_orders WHERE firstPersonId = :firstPersonId " +
+            "AND secondPersonId = :secondPersonId",
+    )
+    suspend fun deleteRelativeAgeOrder(firstPersonId: String, secondPersonId: String)
 
     @Delete
     suspend fun deleteRelationship(relationship: RelationshipEntity)
@@ -163,6 +181,9 @@ interface RelationshipDao {
 
     @Query("DELETE FROM inference_dismissals")
     suspend fun deleteAllInferenceDismissals()
+
+    @Query("DELETE FROM relative_age_orders")
+    suspend fun deleteAllRelativeAgeOrders()
 
     @Transaction
     suspend fun savePersonWithTags(
@@ -205,6 +226,7 @@ interface RelationshipDao {
         relationships: List<RelationshipEntity>,
         graphPositions: List<GraphPositionEntity>,
         inferenceDismissals: List<InferenceDismissalEntity>,
+        relativeAgeOrders: List<RelativeAgeOrderEntity>,
     ) {
         deleteAllRelationships()
         deleteAllPersonTags()
@@ -213,10 +235,12 @@ interface RelationshipDao {
         deleteAllRelationTypes()
         deleteAllGraphPositions()
         deleteAllInferenceDismissals()
+        deleteAllRelativeAgeOrders()
 
         upsertPeople(people)
         upsertGraphPositions(graphPositions)
         upsertInferenceDismissals(inferenceDismissals)
+        upsertRelativeAgeOrders(relativeAgeOrders)
         insertTags(tags)
         insertPersonTags(personTags)
         insertRelationTypes(relationTypes)

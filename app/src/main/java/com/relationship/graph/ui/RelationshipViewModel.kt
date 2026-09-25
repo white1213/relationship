@@ -11,12 +11,14 @@ import com.relationship.graph.data.local.PersonTagEntity
 import com.relationship.graph.data.local.GraphMode
 import com.relationship.graph.data.local.GraphPositionEntity
 import com.relationship.graph.data.local.Gender
+import com.relationship.graph.data.local.AgeComparison
 import com.relationship.graph.data.local.InferenceDismissalEntity
 import com.relationship.graph.data.local.RelationCategory
 import com.relationship.graph.data.local.RelationDirection
 import com.relationship.graph.data.local.RelationTypeEntity
 import com.relationship.graph.data.local.RelationshipSource
 import com.relationship.graph.data.local.RelationshipEntity
+import com.relationship.graph.data.local.RelativeAgeOrderEntity
 import com.relationship.graph.data.local.TagEntity
 import com.relationship.graph.data.inference.InferenceEngine
 import com.relationship.graph.data.inference.InferenceConfirmationMode
@@ -43,6 +45,7 @@ data class AppUiState(
     val relationships: List<RelationshipEntity> = emptyList(),
     val graphPositions: List<GraphPositionEntity> = emptyList(),
     val inferenceDismissals: List<InferenceDismissalEntity> = emptyList(),
+    val relativeAgeOrders: List<RelativeAgeOrderEntity> = emptyList(),
     val inferredCandidates: List<InferredRelationshipCandidate> = emptyList(),
     val showInferenceSuggestions: Boolean = true,
     val graphDisplayMode: GraphDisplayMode = GraphDisplayMode.SIMPLE,
@@ -92,13 +95,15 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
         repository.relationships,
         repository.relationTypes,
         repository.inferenceDismissals,
-    ) { people, relationships, relationTypes, dismissals ->
+        repository.relativeAgeOrders,
+    ) { people, relationships, relationTypes, dismissals, ageOrders ->
         runCatching {
             InferenceEngine.infer(
                 people = people,
                 relationships = relationships,
                 relationTypes = relationTypes,
                 dismissals = dismissals,
+                ageOrders = ageOrders,
             )
         }.getOrDefault(emptyList())
     }.flowOn(kotlinx.coroutines.Dispatchers.Default)
@@ -111,6 +116,7 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
         repository.relationships,
         repository.graphPositions,
         repository.inferenceDismissals,
+        repository.relativeAgeOrders,
         app.container.graphPreferencesStore.showInferenceSuggestions,
         app.container.graphPreferencesStore.graphDisplayMode,
         graphMode,
@@ -129,13 +135,14 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
             relationships = values[4] as List<RelationshipEntity>,
             graphPositions = values[5] as List<GraphPositionEntity>,
             inferenceDismissals = values[6] as List<InferenceDismissalEntity>,
-            showInferenceSuggestions = values[7] as Boolean,
-            graphDisplayMode = values[8] as GraphDisplayMode,
-            graphMode = values[9] as GraphMode,
-            myPersonId = values[10] as String?,
-            searchQuery = values[11] as String,
-            selectedCategory = values[12] as RelationCategory?,
-            inferredCandidates = values[13] as List<InferredRelationshipCandidate>,
+            relativeAgeOrders = values[7] as List<RelativeAgeOrderEntity>,
+            showInferenceSuggestions = values[8] as Boolean,
+            graphDisplayMode = values[9] as GraphDisplayMode,
+            graphMode = values[10] as GraphMode,
+            myPersonId = values[11] as String?,
+            searchQuery = values[12] as String,
+            selectedCategory = values[13] as RelationCategory?,
+            inferredCandidates = values[14] as List<InferredRelationshipCandidate>,
         )
     }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppUiState())
@@ -368,6 +375,43 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
     fun setGraphDisplayMode(mode: GraphDisplayMode) {
         viewModelScope.launch {
             app.container.graphPreferencesStore.setGraphDisplayMode(mode)
+        }
+    }
+
+    fun setRelativeAge(
+        firstPersonId: String,
+        secondPersonId: String,
+        comparison: AgeComparison,
+    ) {
+        viewModelScope.launch {
+            val first = minOf(firstPersonId, secondPersonId)
+            val second = maxOf(firstPersonId, secondPersonId)
+            val normalizedComparison = if (first == firstPersonId) {
+                comparison
+            } else {
+                when (comparison) {
+                    AgeComparison.FIRST_OLDER -> AgeComparison.SECOND_OLDER
+                    AgeComparison.SECOND_OLDER -> AgeComparison.FIRST_OLDER
+                    AgeComparison.SAME_AGE -> AgeComparison.SAME_AGE
+                }
+            }
+            repository.saveRelativeAgeOrder(
+                RelativeAgeOrderEntity(
+                    firstPersonId = first,
+                    secondPersonId = second,
+                    comparison = normalizedComparison,
+                ),
+            )
+            sendMessage("长幼关系已保存")
+        }
+    }
+
+    fun clearRelativeAge(firstPersonId: String, secondPersonId: String) {
+        viewModelScope.launch {
+            val first = minOf(firstPersonId, secondPersonId)
+            val second = maxOf(firstPersonId, secondPersonId)
+            repository.deleteRelativeAgeOrder(first, second)
+            sendMessage("长幼关系已清除")
         }
     }
 

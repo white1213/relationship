@@ -307,6 +307,8 @@ private fun MainNavigation(
                     },
                     onConfirmInference = viewModel::confirmInference,
                     onDismissInference = viewModel::dismissInference,
+                    onSetRelativeAge = viewModel::setRelativeAge,
+                    onClearRelativeAge = viewModel::clearRelativeAge,
                     onDeletePerson = viewModel::deletePerson,
                     onDeleteRelationship = viewModel::deleteRelationship,
                 )

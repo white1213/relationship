@@ -12,6 +12,7 @@ import com.relationship.graph.data.local.InferenceDismissalEntity
 import com.relationship.graph.data.local.PersonEntity
 import com.relationship.graph.data.local.RelationTypeEntity
 import com.relationship.graph.data.local.RelationshipEntity
+import com.relationship.graph.data.local.RelativeAgeOrderEntity
 import com.relationship.graph.data.local.TagEntity
 import com.relationship.graph.data.local.PersonTagEntity
 import java.io.File
@@ -47,6 +48,7 @@ private data class BackupPayload(
     val relationships: List<RelationshipEntity>,
     val graphPositions: List<GraphPositionEntity>?,
     val inferenceDismissals: List<InferenceDismissalEntity>?,
+    val relativeAgeOrders: List<RelativeAgeOrderEntity>?,
     val avatars: Map<String, String>,
     val settings: Map<String, String>,
 )
@@ -77,6 +79,7 @@ class BackupManager(
             relationships = data.relationships,
             graphPositions = data.graphPositions,
             inferenceDismissals = data.inferenceDismissals,
+            relativeAgeOrders = data.relativeAgeOrders,
             avatars = avatars,
             settings = emptyMap(),
         )
@@ -150,6 +153,8 @@ class BackupManager(
             .filter { it.mode in GraphMode.entries }
         val importedDismissals = payload.inferenceDismissals.orEmpty()
             .filter { it.fromPersonId in personIds && it.toPersonId in personIds }
+        val importedAgeOrders = payload.relativeAgeOrders.orEmpty()
+            .filter { it.firstPersonId in personIds && it.secondPersonId in personIds }
         GraphData(
             people = importedPeople,
             tags = payload.tags,
@@ -158,6 +163,7 @@ class BackupManager(
             relationships = payload.relationships,
             graphPositions = importedPositions,
             inferenceDismissals = importedDismissals,
+            relativeAgeOrders = importedAgeOrders,
         )
     }
 
@@ -185,6 +191,13 @@ class BackupManager(
             },
         ) {
             "备份中存在无效的推理忽略记录"
+        }
+        require(
+            payload.relativeAgeOrders.orEmpty().all {
+                it.firstPersonId in personIds && it.secondPersonId in personIds
+            },
+        ) {
+            "备份中存在无效的长幼关系"
         }
     }
 
@@ -228,7 +241,7 @@ class BackupManager(
     companion object {
         const val MIN_BACKUP_PASSWORD_LENGTH = 6
         const val BACKUP_FORMAT_VERSION = 1
-        const val CURRENT_SCHEMA_VERSION = 3
+        const val CURRENT_SCHEMA_VERSION = 4
         const val MIME_TYPE = "application/octet-stream"
         private const val KDF_ALGORITHM = "PBKDF2WithHmacSHA256"
         private const val CIPHER_TRANSFORMATION = "AES/GCM/NoPadding"

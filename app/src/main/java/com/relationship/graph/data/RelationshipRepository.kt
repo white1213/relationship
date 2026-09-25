@@ -12,6 +12,7 @@ import com.relationship.graph.data.local.PersonTagEntity
 import com.relationship.graph.data.local.PresetRelationTypes
 import com.relationship.graph.data.local.RelationTypeEntity
 import com.relationship.graph.data.local.RelationshipEntity
+import com.relationship.graph.data.local.RelativeAgeOrderEntity
 import com.relationship.graph.data.local.TagEntity
 import java.io.File
 import java.io.FileOutputStream
@@ -28,6 +29,7 @@ data class GraphData(
     val relationships: List<RelationshipEntity>,
     val graphPositions: List<GraphPositionEntity>,
     val inferenceDismissals: List<InferenceDismissalEntity>,
+    val relativeAgeOrders: List<RelativeAgeOrderEntity>,
 )
 
 class RelationshipRepository(
@@ -44,6 +46,8 @@ class RelationshipRepository(
     val graphPositions: Flow<List<GraphPositionEntity>> = dao.observeGraphPositions()
     val inferenceDismissals: Flow<List<InferenceDismissalEntity>> =
         dao.observeInferenceDismissals()
+    val relativeAgeOrders: Flow<List<RelativeAgeOrderEntity>> =
+        dao.observeRelativeAgeOrders()
 
     suspend fun ensurePresetRelationTypes() {
         dao.insertRelationTypes(PresetRelationTypes.all)
@@ -134,6 +138,14 @@ class RelationshipRepository(
         dao.deleteInferenceDismissal(fromPersonId, toPersonId, ruleId)
     }
 
+    suspend fun saveRelativeAgeOrder(order: RelativeAgeOrderEntity) {
+        dao.upsertRelativeAgeOrder(order)
+    }
+
+    suspend fun deleteRelativeAgeOrder(firstPersonId: String, secondPersonId: String) {
+        dao.deleteRelativeAgeOrder(firstPersonId, secondPersonId)
+    }
+
     suspend fun getGraphData(): GraphData = GraphData(
         people = dao.getAllPeople(),
         tags = dao.getAllTags(),
@@ -142,6 +154,7 @@ class RelationshipRepository(
         relationships = dao.getAllRelationships(),
         graphPositions = dao.getAllGraphPositions(),
         inferenceDismissals = dao.getAllInferenceDismissals(),
+        relativeAgeOrders = dao.getAllRelativeAgeOrders(),
     )
 
     suspend fun replaceAll(data: GraphData) {
@@ -153,6 +166,7 @@ class RelationshipRepository(
             relationships = data.relationships,
             graphPositions = data.graphPositions,
             inferenceDismissals = data.inferenceDismissals,
+            relativeAgeOrders = data.relativeAgeOrders,
         )
         cleanupUnusedAvatars(data.people.mapNotNull { it.avatarPath }.toSet())
     }

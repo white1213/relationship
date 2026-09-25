@@ -289,11 +289,13 @@ class AiAssistantViewModel(application: Application) : AndroidViewModel(applicat
         val relationTypes = repository.relationTypes.first()
         val relationships = repository.relationships.first()
         val dismissals = repository.inferenceDismissals.first()
+        val ageOrders = repository.relativeAgeOrders.first()
         val inferredCandidates = InferenceEngine.infer(
             people = people,
             relationships = relationships,
             relationTypes = relationTypes,
             dismissals = dismissals,
+            ageOrders = ageOrders,
         )
         val context = mapOf(
             "people" to people.map {

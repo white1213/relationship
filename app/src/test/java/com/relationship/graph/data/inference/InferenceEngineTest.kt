@@ -9,6 +9,8 @@ import com.relationship.graph.data.local.RelationCategory
 import com.relationship.graph.data.local.RelationDirection
 import com.relationship.graph.data.local.RelationTypeEntity
 import com.relationship.graph.data.local.RelationshipEntity
+import com.relationship.graph.data.local.AgeComparison
+import com.relationship.graph.data.local.RelativeAgeOrderEntity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -378,14 +380,110 @@ class InferenceEngineTest {
         )
     }
 
+    @Test
+    fun paternalUncleWivesUseDaNiangAndShenShen() {
+        val people = listOf(
+            person("grandparent", "祖辈"),
+            person("parent", "父亲", Gender.MALE, "1980-01-01"),
+            person("olderUncle", "大爷", Gender.MALE, "1975-01-01"),
+            person("youngerUncle", "叔叔", Gender.MALE, "1985-01-01"),
+            person("olderUncleWife", "大娘", Gender.FEMALE),
+            person("youngerUncleWife", "婶婶", Gender.FEMALE),
+            person("child", "孩子", Gender.MALE),
+        )
+        val relationships = listOf(
+            relationship("gp-parent", "grandparent", "parent", parentChild),
+            relationship("gp-older", "grandparent", "olderUncle", parentChild),
+            relationship("gp-younger", "grandparent", "youngerUncle", parentChild),
+            relationship("older-wife", "olderUncle", "olderUncleWife", spouse),
+            relationship("younger-wife", "youngerUncle", "youngerUncleWife", spouse),
+            relationship("parent-child", "parent", "child", parentChild),
+        )
+
+        val candidates = infer(people, relationships)
+        val olderWife = candidates.single {
+            it.fromPersonId == "olderUncleWife" && it.toPersonId == "child"
+        }
+        val youngerWife = candidates.single {
+            it.fromPersonId == "youngerUncleWife" && it.toPersonId == "child"
+        }
+
+        assertEquals("大娘", olderWife.labelForFrom)
+        assertEquals("婶婶", youngerWife.labelForFrom)
+        assertEquals("侄子", olderWife.labelForTo)
+    }
+
+    @Test
+    fun maternalUncleWifeAndMaternalAuntHusbandUseColloquialLabels() {
+        val people = listOf(
+            person("grandparent", "祖辈"),
+            person("mother", "母亲", Gender.FEMALE),
+            person("uncle", "舅舅", Gender.MALE),
+            person("aunt", "姨妈", Gender.FEMALE),
+            person("uncleWife", "舅妈", Gender.FEMALE),
+            person("auntHusband", "姨父", Gender.MALE),
+            person("child", "孩子", Gender.FEMALE),
+        )
+        val relationships = listOf(
+            relationship("gp-mother", "grandparent", "mother", parentChild),
+            relationship("gp-uncle", "grandparent", "uncle", parentChild),
+            relationship("gp-aunt", "grandparent", "aunt", parentChild),
+            relationship("uncle-wife", "uncle", "uncleWife", spouse),
+            relationship("aunt-husband", "aunt", "auntHusband", spouse),
+            relationship("mother-child", "mother", "child", parentChild),
+        )
+
+        val candidates = infer(people, relationships)
+
+        assertEquals(
+            "舅妈",
+            candidates.single {
+                it.fromPersonId == "uncleWife" && it.toPersonId == "child"
+            }.labelForFrom,
+        )
+        assertEquals(
+            "姨父",
+            candidates.single {
+                it.fromPersonId == "auntHusband" && it.toPersonId == "child"
+            }.labelForFrom,
+        )
+    }
+
+    @Test
+    fun manualAgeOrderRefinesLabelsWhenBirthdaysAreMissing() {
+        val people = listOf(
+            person("parent", "父母"),
+            person("a", "甲", Gender.MALE),
+            person("b", "乙", Gender.MALE),
+        )
+        val relationships = listOf(
+            relationship("a-child", "parent", "a", parentChild),
+            relationship("b-child", "parent", "b", parentChild),
+        )
+        val ageOrder = RelativeAgeOrderEntity(
+            firstPersonId = "a",
+            secondPersonId = "b",
+            comparison = AgeComparison.FIRST_OLDER,
+        )
+
+        val candidate = infer(people, relationships, listOf(ageOrder)).single {
+            setOf(it.fromPersonId, it.toPersonId) == setOf("a", "b")
+        }
+
+        assertEquals("哥哥", candidate.labelFor("a"))
+        assertEquals("弟弟", candidate.labelFor("b"))
+    }
+
     private fun infer(
         people: List<PersonEntity>,
         relationships: List<RelationshipEntity>,
+        ageOrders: List<RelativeAgeOrderEntity> = emptyList(),
     ): List<InferredRelationshipCandidate> = InferenceEngine.infer(
         people = people,
         relationships = relationships,
         relationTypes = PresetRelationTypes.all,
         dismissals = emptyList(),
+        ageOrders = ageOrders,
     )
 
     private fun person(

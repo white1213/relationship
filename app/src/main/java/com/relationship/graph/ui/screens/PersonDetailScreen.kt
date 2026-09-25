@@ -8,9 +8,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
@@ -20,10 +23,12 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -32,10 +37,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.relationship.graph.data.local.PersonEntity
+import com.relationship.graph.data.local.AgeComparison
 import com.relationship.graph.data.local.RelationshipEntity
 import com.relationship.graph.data.inference.InferenceConfidence
 import com.relationship.graph.data.inference.InferenceConfirmationMode
@@ -60,12 +67,15 @@ fun PersonDetailScreen(
         InferenceConfirmationMode,
     ) -> Unit,
     onDismissInference: (InferredRelationshipCandidate) -> Unit,
+    onSetRelativeAge: (String, String, AgeComparison) -> Unit,
+    onClearRelativeAge: (String, String) -> Unit,
     onDeletePerson: (PersonEntity) -> Unit,
     onDeleteRelationship: (RelationshipEntity) -> Unit,
 ) {
     val person = state.person(personId)
     var showDeletePerson by remember { mutableStateOf(false) }
     var relationshipToDelete by remember { mutableStateOf<RelationshipEntity?>(null) }
+    var ageOrderDialogPersonId by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
         topBar = {
@@ -136,6 +146,68 @@ fun PersonDetailScreen(
             }
             person.notes.takeIf(String::isNotBlank)?.let {
                 DetailText(label = "备注", value = it, modifier = Modifier.fillMaxWidth())
+            }
+
+            val ageOrders = state.relativeAgeOrders.filter {
+                it.firstPersonId == person.id || it.secondPersonId == person.id
+            }
+            HorizontalDivider()
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text("长幼关系", style = MaterialTheme.typography.titleLarge)
+                OutlinedButton(onClick = { ageOrderDialogPersonId = "" }) {
+                    Icon(Icons.Rounded.Add, contentDescription = null)
+                    Text("添加")
+                }
+            }
+            if (ageOrders.isEmpty()) {
+                Text(
+                    text = "没有手动长幼信息，当前仅按生日判断。",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            } else {
+                ageOrders.forEach { order ->
+                    val otherPersonId = if (order.firstPersonId == person.id) {
+                        order.secondPersonId
+                    } else {
+                        order.firstPersonId
+                    }
+                    val otherPerson = state.person(otherPersonId)
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { ageOrderDialogPersonId = otherPersonId },
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = relativeAgeDescription(
+                                    order = order,
+                                    currentPersonId = person.id,
+                                    otherName = otherPerson?.name ?: "未知人物",
+                                ),
+                                modifier = Modifier.weight(1f),
+                            )
+                            IconButton(
+                                onClick = { onClearRelativeAge(person.id, otherPersonId) },
+                            ) {
+                                Icon(
+                                    Icons.Rounded.Delete,
+                                    contentDescription = "删除长幼关系",
+                                    tint = MaterialTheme.colorScheme.error,
+                                )
+                            }
+                        }
+                    }
+                }
             }
 
             val inferredCandidates = state.inferenceCandidatesFor(person.id)
@@ -369,6 +441,27 @@ fun PersonDetailScreen(
         )
     }
 
+    ageOrderDialogPersonId?.let { initialOtherPersonId ->
+        RelativeAgeEditorDialog(
+            currentPerson = requireNotNull(person),
+            people = state.people.filter { it.id != requireNotNull(person).id },
+            initialOtherPersonId = initialOtherPersonId.ifBlank { null },
+            existingComparison = initialOtherPersonId
+                .takeIf(String::isNotBlank)
+                ?.let { otherId ->
+                    state.relativeAgeOrders.firstOrNull {
+                        setOf(it.firstPersonId, it.secondPersonId) ==
+                            setOf(requireNotNull(person).id, otherId)
+                    }?.comparisonFor(requireNotNull(person).id)
+                },
+            onSave = { otherPersonId, comparison ->
+                onSetRelativeAge(requireNotNull(person).id, otherPersonId, comparison)
+                ageOrderDialogPersonId = null
+            },
+            onDismiss = { ageOrderDialogPersonId = null },
+        )
+    }
+
     relationshipToDelete?.let { relationship ->
         AlertDialog(
             onDismissRequest = { relationshipToDelete = null },
@@ -388,6 +481,150 @@ fun PersonDetailScreen(
                 TextButton(onClick = { relationshipToDelete = null }) { Text("取消") }
             },
         )
+    }
+}
+
+@Composable
+private fun RelativeAgeEditorDialog(
+    currentPerson: PersonEntity,
+    people: List<PersonEntity>,
+    initialOtherPersonId: String?,
+    existingComparison: AgeComparison?,
+    onSave: (otherPersonId: String, comparison: AgeComparison) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var selectedPersonId by rememberSaveable(initialOtherPersonId) {
+        mutableStateOf(initialOtherPersonId)
+    }
+    var comparison by rememberSaveable(initialOtherPersonId, existingComparison) {
+        mutableStateOf(existingComparison)
+    }
+    var query by rememberSaveable(initialOtherPersonId) { mutableStateOf("") }
+    val selectedPerson = people.firstOrNull { it.id == selectedPersonId }
+    val filteredPeople = people.filter {
+        it.name.contains(query.trim(), ignoreCase = true)
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                if (selectedPerson == null) {
+                    "选择长幼比较对象"
+                } else {
+                    "${currentPerson.name} 与 ${selectedPerson.name}"
+                },
+            )
+        },
+        text = {
+            if (selectedPerson == null) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        label = { Text("搜索姓名") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 400.dp),
+                    ) {
+                        items(filteredPeople, key = { it.id }) { person ->
+                            Text(
+                                text = person.name,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        selectedPersonId = person.id
+                                        comparison = null
+                                    }
+                                    .padding(vertical = 10.dp),
+                            )
+                        }
+                    }
+                }
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("请选择长幼关系")
+                    FilterChip(
+                        selected = comparison == AgeComparison.FIRST_OLDER,
+                        onClick = { comparison = AgeComparison.FIRST_OLDER },
+                        label = { Text("${currentPerson.name} 年长") },
+                    )
+                    FilterChip(
+                        selected = comparison == AgeComparison.SECOND_OLDER,
+                        onClick = { comparison = AgeComparison.SECOND_OLDER },
+                        label = { Text("${selectedPerson.name} 年长") },
+                    )
+                    FilterChip(
+                        selected = comparison == AgeComparison.SAME_AGE,
+                        onClick = { comparison = AgeComparison.SAME_AGE },
+                        label = { Text("同龄") },
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            if (selectedPerson != null) {
+                TextButton(
+                    onClick = {
+                        comparison?.let { onSave(selectedPerson.id, it) }
+                    },
+                    enabled = comparison != null,
+                ) {
+                    Text("保存")
+                }
+            }
+        },
+        dismissButton = {
+            Row {
+                if (selectedPerson != null && initialOtherPersonId == null) {
+                    TextButton(onClick = { selectedPersonId = null }) {
+                        Text("重新选择")
+                    }
+                }
+                TextButton(onClick = onDismiss) { Text("取消") }
+            }
+        },
+    )
+}
+
+private fun relativeAgeDescription(
+    order: com.relationship.graph.data.local.RelativeAgeOrderEntity,
+    currentPersonId: String,
+    otherName: String,
+): String {
+    val currentIsFirst = order.firstPersonId == currentPersonId
+    return when (order.comparison) {
+        AgeComparison.FIRST_OLDER -> if (currentIsFirst) {
+            "我比 $otherName 年长"
+        } else {
+            "$otherName 比我年长"
+        }
+        AgeComparison.SECOND_OLDER -> if (currentIsFirst) {
+            "$otherName 比我年长"
+        } else {
+            "我比 $otherName 年长"
+        }
+        AgeComparison.SAME_AGE -> "我与 $otherName 同龄"
+    }
+}
+
+private fun com.relationship.graph.data.local.RelativeAgeOrderEntity.comparisonFor(
+    personId: String,
+): AgeComparison = if (firstPersonId == personId) {
+    when (comparison) {
+        AgeComparison.FIRST_OLDER -> AgeComparison.FIRST_OLDER
+        AgeComparison.SECOND_OLDER -> AgeComparison.SECOND_OLDER
+        AgeComparison.SAME_AGE -> AgeComparison.SAME_AGE
+    }
+} else {
+    when (comparison) {
+        AgeComparison.FIRST_OLDER -> AgeComparison.SECOND_OLDER
+        AgeComparison.SECOND_OLDER -> AgeComparison.FIRST_OLDER
+        AgeComparison.SAME_AGE -> AgeComparison.SAME_AGE
     }
 }
 

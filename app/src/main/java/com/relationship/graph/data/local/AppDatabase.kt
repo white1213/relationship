@@ -42,6 +42,12 @@ class Converters {
     @TypeConverter
     fun stringToRelationshipSource(value: String): RelationshipSource =
         RelationshipSource.valueOf(value)
+
+    @TypeConverter
+    fun ageComparisonToString(value: AgeComparison): String = value.name
+
+    @TypeConverter
+    fun stringToAgeComparison(value: String): AgeComparison = AgeComparison.valueOf(value)
 }
 
 @Database(
@@ -53,8 +59,9 @@ class Converters {
         RelationshipEntity::class,
         GraphPositionEntity::class,
         InferenceDismissalEntity::class,
+        RelativeAgeOrderEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -72,7 +79,7 @@ abstract class AppDatabase : RoomDatabase() {
                 "relationship-graph.db",
             )
                 .openHelperFactory(factory)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build()
         }
 
@@ -154,6 +161,34 @@ abstract class AppDatabase : RoomDatabase() {
                 database.execSQL(
                     "CREATE INDEX IF NOT EXISTS `index_inference_dismissals_toPersonId` " +
                         "ON `inference_dismissals` (`toPersonId`)",
+                )
+            }
+        }
+
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `relative_age_orders` (
+                        `firstPersonId` TEXT NOT NULL,
+                        `secondPersonId` TEXT NOT NULL,
+                        `comparison` TEXT NOT NULL,
+                        `updatedAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`firstPersonId`, `secondPersonId`),
+                        FOREIGN KEY(`firstPersonId`) REFERENCES `people`(`id`)
+                            ON UPDATE NO ACTION ON DELETE CASCADE,
+                        FOREIGN KEY(`secondPersonId`) REFERENCES `people`(`id`)
+                            ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_relative_age_orders_firstPersonId` " +
+                        "ON `relative_age_orders` (`firstPersonId`)",
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_relative_age_orders_secondPersonId` " +
+                        "ON `relative_age_orders` (`secondPersonId`)",
                 )
             }
         }
