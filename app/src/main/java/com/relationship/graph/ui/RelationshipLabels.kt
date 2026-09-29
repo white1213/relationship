@@ -84,7 +84,7 @@ fun relationshipLabelForPerson(
             FamilyRelationKind.OTHER -> {
                 val name = type.name.trim()
                 if (isSiblingAlias(name)) {
-                    return if (personId == relationship.fromPersonId) {
+                    return if (personId == relationship.toPersonId) {
                         name
                     } else {
                         inverseSiblingTitle(name, otherPerson)
@@ -100,19 +100,16 @@ fun relationshipLabelForPerson(
             }
         }
     }
-    if (type.direction == RelationDirection.BIDIRECTIONAL) {
-        return if (relationship.fromPersonId == personId) {
-            relationship.labelOverride ?: type.name
-        } else {
-            relationship.inverseLabelOverride
-                ?: relationship.labelOverride
-                ?: type.name
-        }
-    }
-    return if (relationship.fromPersonId == personId) {
+    // 方向约定（与关系编辑页「A 是 B 的X」一致）：from 就是 type.name 这个称谓，
+    // 所以 to 称呼 from 用 labelOverride/type.name，from 称呼 to 用 inverse 一侧。
+    // confirmInference 也是按这个约定写入 override 的。
+    return if (relationship.toPersonId == personId) {
         relationship.labelOverride ?: type.name
     } else {
-        relationship.inverseLabelOverride ?: type.inverseName ?: type.name
+        relationship.inverseLabelOverride
+            ?: type.inverseName
+            ?: relationship.labelOverride
+            ?: type.name
     }
 }
 
@@ -151,13 +148,14 @@ private fun directGenericLabel(
     type: RelationTypeEntity,
     personId: String,
 ): String {
-    if (type.direction == RelationDirection.BIDIRECTIONAL) {
-        return relationship.labelOverride ?: type.name
-    }
-    return if (relationship.fromPersonId == personId) {
+    // 同 relationshipLabelForPerson 末尾：from 是 type.name，to 一方用 inverse。
+    return if (relationship.toPersonId == personId) {
         relationship.labelOverride ?: type.name
     } else {
-        relationship.inverseLabelOverride ?: type.inverseName ?: type.name
+        relationship.inverseLabelOverride
+            ?: type.inverseName
+            ?: relationship.labelOverride
+            ?: type.name
     }
 }
 

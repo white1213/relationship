@@ -1,8 +1,13 @@
 package com.relationship.graph.reminder
 
+import android.Manifest
+import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.core.content.ContextCompat
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.nlf.calendar.LunarYear
@@ -36,7 +41,17 @@ class ReminderWorker(
             return Result.success()
         }
         val manager = NotificationManagerCompat.from(applicationContext)
+        // API 33+ 未授予 POST_NOTIFICATIONS 时 areNotificationsEnabled() 也会返回 false，
+        // 这里再显式校验一次权限，避免误用未授权 API。
         if (!manager.areNotificationsEnabled()) return Result.success()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(
+                applicationContext,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return Result.success()
+        }
 
         val people = app.container.repository.people.first()
         val today = LocalDate.now()
@@ -129,6 +144,8 @@ class ReminderWorker(
         return false
     }
 
+    // 通知权限与开关均在 doWork 中校验过，此处直接发送。
+    @SuppressLint("MissingPermission")
     private fun notify(manager: NotificationManagerCompat, person: PersonEntity, reminder: Reminder) {
         val title: String
         val text: String

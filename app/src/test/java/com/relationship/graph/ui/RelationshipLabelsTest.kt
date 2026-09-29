@@ -36,11 +36,11 @@ class RelationshipLabelsTest {
         )
 
         assertEquals(
-            "父母",
+            "子女",
             relationshipLabelForPerson(relationship, parentType, "parent"),
         )
         assertEquals(
-            "子女",
+            "父母",
             relationshipLabelForPerson(relationship, parentType, "child"),
         )
     }
