@@ -1,8 +1,19 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
+}
+
+// 签名口令不进版本库：从项目根目录的 keystore.properties 读取（参考 keystore.properties.example）。
+// 未创建该文件时，debug 使用 Android 默认调试签名，release 产物为未签名 APK。
+val keystoreProperties = Properties()
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val hasSigningConfig = keystorePropertiesFile.exists() && run {
+    keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
+    !keystoreProperties.getProperty("storeFile").isNullOrBlank()
 }
 
 android {
@@ -23,22 +34,28 @@ android {
     }
 
     signingConfigs {
-        create("localDebug") {
-            storeFile = rootProject.file(".signing/debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
+        if (hasSigningConfig) {
+            create("app") {
+                storeFile = rootProject.file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
         }
     }
 
     buildTypes {
         debug {
-            signingConfig = signingConfigs.getByName("localDebug")
+            if (hasSigningConfig) {
+                signingConfig = signingConfigs.getByName("app")
+            }
         }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("localDebug")
+            if (hasSigningConfig) {
+                signingConfig = signingConfigs.getByName("app")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

@@ -80,3 +80,18 @@ dist/relationship-graph-v1.7.1.apk
 ```text
 app/build/outputs/apk/debug/app-debug.apk
 ```
+
+## 签名配置
+
+签名口令不进版本库，构建时从项目根目录的 `keystore.properties` 读取。首次构建前，把 `keystore.properties.example` 复制为 `keystore.properties` 并按需修改：
+
+```properties
+storeFile=.signing/debug.keystore
+storePassword=android
+keyAlias=androiddebugkey
+keyPassword=android
+```
+
+- `storeFile` 支持仓库相对路径（相对项目根目录）或绝对路径。
+- 未创建 `keystore.properties` 时：debug 构建使用 Android 默认调试签名；release 构建产物为未签名 APK。
+- 正式发布请使用固定的一把钥匙并妥善备份 keystore 文件和 `keystore.properties`；更换签名后已安装用户将无法覆盖安装。

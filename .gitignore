@@ -6,6 +6,7 @@
 .android-avd/
 .android-user/
 .signing/
+keystore.properties
 .idea/
 local.properties
 **/build/
