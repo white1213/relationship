@@ -48,6 +48,7 @@ import com.relationship.graph.data.local.RelationDirection
 import com.relationship.graph.data.local.MarriageKinshipMode
 import com.relationship.graph.data.FamilyRelationKind
 import com.relationship.graph.data.RelationshipSemantics
+import com.relationship.graph.data.inference.KinshipValidator
 import com.relationship.graph.ui.AppUiState
 import com.relationship.graph.ui.RelationshipViewModel
 import com.relationship.graph.ui.components.AppTopBar
@@ -90,6 +91,8 @@ fun RelationEditorScreen(
     var secondMenu by remember { mutableStateOf(false) }
     var typePickerVisible by remember { mutableStateOf(false) }
     var customTypeDialog by remember { mutableStateOf(false) }
+    var kinshipConflict by remember { mutableStateOf<KinshipValidator.KinshipConflict?>(null) }
+    var validating by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     val firstPerson = state.person(firstPersonId)
@@ -266,27 +269,69 @@ fun RelationEditorScreen(
                         fromPersonId = firstPersonId
                         toPersonId = secondPersonId
                     }
-                    viewModel.saveRelationship(
-                        relationshipId = relationshipId,
-                        fromPersonId = fromPersonId,
-                        toPersonId = toPersonId,
-                        relationTypeId = type.id,
-                        note = note,
-                        marriageKinshipMode = marriageKinshipMode,
-                        existing = existing,
-                    )
-                    onBack()
+                    scope.launch {
+                        validating = true
+                        val result = viewModel.validateRelationship(
+                            fromPersonId = fromPersonId,
+                            toPersonId = toPersonId,
+                            relationTypeId = type.id,
+                            existing = existing,
+                        )
+                        validating = false
+                        val conflict = result.conflicts.firstOrNull()
+                        if (conflict != null) {
+                            kinshipConflict = conflict
+                        } else {
+                            viewModel.saveRelationship(
+                                relationshipId = relationshipId,
+                                fromPersonId = fromPersonId,
+                                toPersonId = toPersonId,
+                                relationTypeId = type.id,
+                                note = note,
+                                marriageKinshipMode = marriageKinshipMode,
+                                existing = existing,
+                            )
+                            onBack()
+                        }
+                    }
                 },
                 enabled = firstPersonId.isNotBlank() &&
                     secondPersonId.isNotBlank() &&
                     firstPersonId != secondPersonId &&
-                    relationTypeId.isNotBlank(),
+                    relationTypeId.isNotBlank() &&
+                    !validating,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("保存")
+                Text(if (validating) "正在校验辈分…" else "保存")
             }
             Spacer(Modifier.height(32.dp))
         }
+    }
+
+    kinshipConflict?.let { conflict ->
+        AlertDialog(
+            onDismissRequest = { kinshipConflict = null },
+            title = { Text("辈分冲突，已阻止保存") },
+            text = {
+                Column {
+                    Text(conflict.message)
+                    if (conflict.pathNames.size > 1) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = conflict.pathNames
+                                .map { state.person(it)?.name ?: it }.joinToString(" → "),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { kinshipConflict = null }) {
+                    Text("知道了")
+                }
+            },
+        )
     }
 
     if (typePickerVisible) {

@@ -24,12 +24,14 @@ import com.relationship.graph.data.local.TagEntity
 import com.relationship.graph.data.inference.InferenceEngine
 import com.relationship.graph.data.inference.InferenceConfirmationMode
 import com.relationship.graph.data.inference.InferredRelationshipCandidate
+import com.relationship.graph.data.inference.KinshipValidator
 import com.relationship.graph.data.preferences.GraphDisplayMode
 import java.util.UUID
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flowOn
@@ -89,6 +91,7 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
     private val selectedCategory = MutableStateFlow<RelationCategory?>(null)
     private val graphMode = MutableStateFlow(GraphMode.FAMILY)
     private val messageChannel = Channel<String>(Channel.BUFFERED)
+    private val undoEventsChannel = Channel<UndoableAction>(Channel.UNLIMITED)
     val messages = messageChannel.receiveAsFlow()
 
     private val inferenceCandidatesFlow = combine(
@@ -250,38 +253,95 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
         }
         viewModelScope.launch {
             val now = System.currentTimeMillis()
-            repository.saveRelationship(
-                RelationshipEntity(
-                    id = relationshipId ?: UUID.randomUUID().toString(),
-                    fromPersonId = fromPersonId,
-                    toPersonId = toPersonId,
-                    relationTypeId = relationTypeId,
-                    source = existing?.source ?: RelationshipSource.MANUAL,
-                    marriageKinshipMode = marriageKinshipMode,
-                    labelOverride = if (existing?.relationTypeId == relationTypeId) {
-                        existing.labelOverride
-                    } else {
-                        null
-                    },
-                    inverseLabelOverride = if (existing?.relationTypeId == relationTypeId) {
-                        existing.inverseLabelOverride
-                    } else {
-                        null
-                    },
-                    note = note.trim(),
-                    createdAt = existing?.createdAt ?: now,
-                    updatedAt = now,
-                ),
+            val relationship = RelationshipEntity(
+                id = relationshipId ?: UUID.randomUUID().toString(),
+                fromPersonId = fromPersonId,
+                toPersonId = toPersonId,
+                relationTypeId = relationTypeId,
+                source = existing?.source ?: RelationshipSource.MANUAL,
+                marriageKinshipMode = marriageKinshipMode,
+                labelOverride = if (existing?.relationTypeId == relationTypeId) {
+                    existing.labelOverride
+                } else {
+                    null
+                },
+                inverseLabelOverride = if (existing?.relationTypeId == relationTypeId) {
+                    existing.inverseLabelOverride
+                } else {
+                    null
+                },
+                note = note.trim(),
+                createdAt = existing?.createdAt ?: now,
+                updatedAt = now,
             )
+            repository.saveRelationship(relationship)
+            pushUndo(label = if (existing == null) "新增关系" else "修改关系") {
+                if (existing == null) {
+                    repository.deleteRelationship(relationship)
+                } else {
+                    repository.saveRelationship(existing)
+                }
+            }
             sendMessage("关系已保存")
         }
+    }
+
+    /** 保存前的辈分校验；编辑页据结果弹窗拦截。 */
+    suspend fun validateRelationship(
+        fromPersonId: String,
+        toPersonId: String,
+        relationTypeId: String,
+        existing: RelationshipEntity?,
+    ): KinshipValidator.Result {
+        val candidate = RelationshipEntity(
+            id = existing?.id ?: "validation",
+            fromPersonId = fromPersonId,
+            toPersonId = toPersonId,
+            relationTypeId = relationTypeId,
+        )
+        val people = repository.people.first()
+        return KinshipValidator.validate(
+            existingRelationships = repository.relationships.first()
+                .filterNot { it.id == candidate.id },
+            relationTypes = repository.relationTypes.first(),
+            peopleById = people.associateBy { it.id },
+            candidate = candidate,
+        )
     }
 
     fun deleteRelationship(relationship: RelationshipEntity) {
         viewModelScope.launch {
             repository.deleteRelationship(relationship)
+            pushUndo(label = "删除关系") {
+                repository.saveRelationship(relationship)
+            }
             sendMessage("关系已删除")
         }
+    }
+
+    fun undoAction(actionId: Long) {
+        val action = undoStack.lastOrNull { it.id == actionId } ?: return
+        undoStack.removeAll { it.id == actionId }
+        viewModelScope.launch {
+            runCatching { action.undo() }
+                .onSuccess { sendMessage("已撤销：${action.label}") }
+                .onFailure { sendMessage(it.message ?: "撤销失败") }
+        }
+    }
+
+    private fun pushUndo(label: String, undo: suspend () -> Unit) {
+        val action = UndoableAction(id = ++undoSequence, label = label, undo = undo)
+        undoStack.addLast(action)
+        while (undoStack.size > UNDO_STACK_LIMIT) undoStack.removeFirst()
+        undoEventsChannel.trySend(action)
+    }
+
+    private val undoStack = ArrayDeque<UndoableAction>()
+    private var undoSequence = 0L
+    val undoEvents = undoEventsChannel.receiveAsFlow()
+
+    private companion object {
+        const val UNDO_STACK_LIMIT = 20
     }
 
     suspend fun createCustomRelationType(
@@ -465,3 +525,10 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
         messageChannel.trySend(message)
     }
 }
+
+/** 一次可撤销的操作；UI 收到 undoEvents 后以 Snackbar 呈现「撤销」入口。 */
+data class UndoableAction(
+    val id: Long,
+    val label: String,
+    val undo: suspend () -> Unit,
+)

@@ -175,6 +175,73 @@ interface RelationshipDao {
     @Query("DELETE FROM relative_age_orders")
     suspend fun deleteAllRelativeAgeOrders()
 
+    // ===== AI 候选（v6） =====
+
+    @Query("SELECT * FROM ai_candidates WHERE status = 'PENDING' ORDER BY createdAt")
+    fun observePendingAiCandidates(): Flow<List<AiCandidateEntity>>
+
+    @Query("SELECT * FROM ai_candidates WHERE status = 'PENDING' ORDER BY createdAt")
+    suspend fun getPendingAiCandidates(): List<AiCandidateEntity>
+
+    @Upsert
+    suspend fun upsertAiCandidates(candidates: List<AiCandidateEntity>)
+
+    @Query("UPDATE ai_candidates SET status = :status WHERE id = :id")
+    suspend fun updateAiCandidateStatus(id: String, status: String)
+
+    @Query("DELETE FROM ai_candidates WHERE status = 'DISMISSED'")
+    suspend fun deleteDismissedAiCandidates()
+
+    // ===== GEDCOM 暂存（v6） =====
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertImportBatch(batch: ImportBatchEntity)
+
+    @Query("SELECT * FROM import_batches WHERE id = :id")
+    suspend fun getImportBatch(id: String): ImportBatchEntity?
+
+    @Query("UPDATE import_batches SET status = :status, rollbackJson = :rollbackJson WHERE id = :id")
+    suspend fun updateImportBatchStatus(id: String, status: String, rollbackJson: String?)
+
+    @Query("DELETE FROM import_batches WHERE id = :id")
+    suspend fun deleteImportBatch(id: String)
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertStagedPeople(people: List<StagedPersonEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertStagedRelationships(relationships: List<StagedRelationshipEntity>)
+
+    @Query("SELECT * FROM staged_people WHERE batchId = :batchId ORDER BY name COLLATE NOCASE")
+    suspend fun getStagedPeople(batchId: String): List<StagedPersonEntity>
+
+    @Query("SELECT * FROM staged_relationships WHERE batchId = :batchId")
+    suspend fun getStagedRelationships(batchId: String): List<StagedRelationshipEntity>
+
+    @Query(
+        "UPDATE staged_people SET decision = :decision, mergePersonId = :mergePersonId " +
+            "WHERE id = :id",
+    )
+    suspend fun updateStagedPersonDecision(
+        id: String,
+        decision: String,
+        mergePersonId: String?,
+    )
+
+    @Query("UPDATE staged_relationships SET decision = :decision WHERE id = :id")
+    suspend fun updateStagedRelationshipDecision(id: String, decision: String)
+
+    // ===== 人物合并记录（v6） =====
+
+    @Insert
+    suspend fun insertMergeRecord(record: MergeRecordEntity)
+
+    @Query("SELECT * FROM merge_records WHERE id = :id")
+    suspend fun getMergeRecord(id: String): MergeRecordEntity?
+
+    @Query("DELETE FROM merge_records WHERE id = :id")
+    suspend fun deleteMergeRecord(id: String)
+
     @Transaction
     suspend fun savePersonWithTags(
         person: PersonEntity,

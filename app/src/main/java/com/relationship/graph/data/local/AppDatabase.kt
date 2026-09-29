@@ -55,6 +55,13 @@ class Converters {
 
     @TypeConverter
     fun stringToAgeComparison(value: String): AgeComparison = AgeComparison.valueOf(value)
+
+    @TypeConverter
+    fun birthdayCalendarToString(value: BirthdayCalendar?): String? = value?.name
+
+    @TypeConverter
+    fun stringToBirthdayCalendar(value: String?): BirthdayCalendar? =
+        value?.let { BirthdayCalendar.valueOf(it) }
 }
 
 @Database(
@@ -67,8 +74,13 @@ class Converters {
         GraphPositionEntity::class,
         InferenceDismissalEntity::class,
         RelativeAgeOrderEntity::class,
+        AiCandidateEntity::class,
+        ImportBatchEntity::class,
+        StagedPersonEntity::class,
+        StagedRelationshipEntity::class,
+        MergeRecordEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -86,8 +98,125 @@ abstract class AppDatabase : RoomDatabase() {
                 "relationship-graph.db",
             )
                 .openHelperFactory(factory)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                .addMigrations(
+                    MIGRATION_1_2,
+                    MIGRATION_2_3,
+                    MIGRATION_3_4,
+                    MIGRATION_4_5,
+                    MIGRATION_5_6,
+                )
                 .build()
+        }
+
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // people：农历/已故/忌日字段，全部可空以兼容旧数据。
+                listOf(
+                    "`birthdayCalendar` TEXT",
+                    "`lunarMonth` INTEGER",
+                    "`lunarDay` INTEGER",
+                    "`isLeapMonth` INTEGER",
+                    "`isDeceased` INTEGER",
+                    "`deathDate` TEXT",
+                    "`deathCalendar` TEXT",
+                    "`lunarDeathMonth` INTEGER",
+                    "`lunarDeathDay` INTEGER",
+                    "`isLeapDeathMonth` INTEGER",
+                ).forEach { column ->
+                    database.execSQL("ALTER TABLE `people` ADD COLUMN $column")
+                }
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `ai_candidates` (
+                        `id` TEXT NOT NULL,
+                        `kind` TEXT NOT NULL,
+                        `payloadJson` TEXT NOT NULL,
+                        `status` TEXT NOT NULL,
+                        `source` TEXT NOT NULL,
+                        `sourceRef` TEXT,
+                        `createdAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent(),
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_ai_candidates_status` " +
+                        "ON `ai_candidates` (`status`)",
+                )
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `import_batches` (
+                        `id` TEXT NOT NULL,
+                        `fileName` TEXT NOT NULL,
+                        `status` TEXT NOT NULL,
+                        `personCount` INTEGER NOT NULL,
+                        `relationshipCount` INTEGER NOT NULL,
+                        `rollbackJson` TEXT,
+                        `createdAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent(),
+                )
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `staged_people` (
+                        `id` TEXT NOT NULL,
+                        `batchId` TEXT NOT NULL,
+                        `xref` TEXT,
+                        `name` TEXT NOT NULL,
+                        `gender` TEXT NOT NULL,
+                        `birthDate` TEXT NOT NULL,
+                        `deathDate` TEXT NOT NULL,
+                        `payloadJson` TEXT NOT NULL,
+                        `suggestedMergePersonId` TEXT,
+                        `decision` TEXT NOT NULL,
+                        `mergePersonId` TEXT,
+                        PRIMARY KEY(`id`),
+                        FOREIGN KEY(`batchId`) REFERENCES `import_batches`(`id`)
+                            ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_staged_people_batchId` " +
+                        "ON `staged_people` (`batchId`)",
+                )
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `staged_relationships` (
+                        `id` TEXT NOT NULL,
+                        `batchId` TEXT NOT NULL,
+                        `fromRef` TEXT NOT NULL,
+                        `toRef` TEXT NOT NULL,
+                        `relationTypeId` TEXT NOT NULL,
+                        `note` TEXT NOT NULL,
+                        `decision` TEXT NOT NULL,
+                        PRIMARY KEY(`id`),
+                        FOREIGN KEY(`batchId`) REFERENCES `import_batches`(`id`)
+                            ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_staged_relationships_batchId` " +
+                        "ON `staged_relationships` (`batchId`)",
+                )
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `merge_records` (
+                        `id` TEXT NOT NULL,
+                        `survivorId` TEXT NOT NULL,
+                        `snapshotJson` TEXT NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent(),
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_merge_records_survivorId` " +
+                        "ON `merge_records` (`survivorId`)",
+                )
+            }
         }
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {

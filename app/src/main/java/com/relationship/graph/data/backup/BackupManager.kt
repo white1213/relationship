@@ -295,7 +295,7 @@ class BackupManager(
     companion object {
         const val MIN_BACKUP_PASSWORD_LENGTH = 6
         const val BACKUP_FORMAT_VERSION = 1
-        const val CURRENT_SCHEMA_VERSION = 5
+        const val CURRENT_SCHEMA_VERSION = 6
         const val MIME_TYPE = "application/octet-stream"
         private const val KDF_ALGORITHM = "PBKDF2WithHmacSHA256"
         private const val CIPHER_TRANSFORMATION = "AES/GCM/NoPadding"

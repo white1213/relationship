@@ -19,7 +19,34 @@ data class PersonEntity(
     val notes: String = "",
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
-)
+    // v6：生日/忌日的日历类型与农历字段；null 兼容旧数据（视为公历、在世）。
+    val birthdayCalendar: BirthdayCalendar? = null,
+    val lunarMonth: Int? = null,
+    val lunarDay: Int? = null,
+    val isLeapMonth: Boolean? = null,
+    val isDeceased: Boolean? = null,
+    val deathDate: String? = null,
+    val deathCalendar: BirthdayCalendar? = null,
+    val lunarDeathMonth: Int? = null,
+    val lunarDeathDay: Int? = null,
+    val isLeapDeathMonth: Boolean? = null,
+) {
+    val deceased: Boolean
+        get() = isDeceased == true
+
+    val usesLunarBirthday: Boolean
+        get() = birthdayCalendar == BirthdayCalendar.LUNAR &&
+            lunarMonth != null && lunarDay != null
+
+    val usesLunarDeathDay: Boolean
+        get() = deathCalendar == BirthdayCalendar.LUNAR &&
+            lunarDeathMonth != null && lunarDeathDay != null
+}
+
+enum class BirthdayCalendar {
+    SOLAR,
+    LUNAR,
+}
 
 enum class Gender {
     UNSPECIFIED,
@@ -405,3 +432,93 @@ object PresetRelationTypes {
         ),
     )
 }
+
+/** AI 生成的待确认候选（文本提取、聊天建议），确认前绝不写入主表。 */
+@Entity(tableName = "ai_candidates", indices = [Index("status")])
+data class AiCandidateEntity(
+    @PrimaryKey val id: String,
+    val kind: String, // PERSON | RELATIONSHIP
+    val payloadJson: String,
+    val status: String, // PENDING | CONFIRMED | DISMISSED
+    val source: String, // TEXT_EXTRACT | CHAT
+    val sourceRef: String? = null,
+    val createdAt: Long = System.currentTimeMillis(),
+)
+
+/** GEDCOM 导入批次；确认应用前数据只存在于暂存表。 */
+@Entity(tableName = "import_batches")
+data class ImportBatchEntity(
+    @PrimaryKey val id: String,
+    val fileName: String,
+    val status: String, // STAGED | APPLIED | DISCARDED
+    val personCount: Int = 0,
+    val relationshipCount: Int = 0,
+    val rollbackJson: String? = null,
+    val createdAt: Long = System.currentTimeMillis(),
+)
+
+/** 暂存的人物：确认后写入 people，或合并到已有人物，或忽略。 */
+@Entity(
+    tableName = "staged_people",
+    foreignKeys = [
+        ForeignKey(
+            entity = ImportBatchEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["batchId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("batchId")],
+)
+data class StagedPersonEntity(
+    @PrimaryKey val id: String,
+    val batchId: String,
+    val xref: String? = null,
+    val name: String,
+    val gender: Gender = Gender.UNSPECIFIED,
+    val birthDate: String = "",
+    val deathDate: String = "",
+    val payloadJson: String,
+    val suggestedMergePersonId: String? = null,
+    val decision: String = StagedDecision.PENDING,
+    val mergePersonId: String? = null,
+)
+
+/** 暂存的关系：fromRef/toRef 指向 staged_people.id 或已有人物 id。 */
+@Entity(
+    tableName = "staged_relationships",
+    foreignKeys = [
+        ForeignKey(
+            entity = ImportBatchEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["batchId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("batchId")],
+)
+data class StagedRelationshipEntity(
+    @PrimaryKey val id: String,
+    val batchId: String,
+    val fromRef: String,
+    val toRef: String,
+    val relationTypeId: String,
+    val note: String = "",
+    val decision: String = StagedDecision.PENDING,
+)
+
+object StagedDecision {
+    const val PENDING = "PENDING"
+    const val CREATE = "CREATE"
+    const val MERGE = "MERGE"
+    const val IGNORE = "IGNORE"
+}
+
+/** 人物合并的撤销快照：撤销时按 snapshot_json 恢复被合并者与被改写的关系。 */
+@Entity(tableName = "merge_records", indices = [Index("survivorId")])
+data class MergeRecordEntity(
+    @PrimaryKey val id: String,
+    val survivorId: String,
+    val snapshotJson: String,
+    val createdAt: Long = System.currentTimeMillis(),
+)
