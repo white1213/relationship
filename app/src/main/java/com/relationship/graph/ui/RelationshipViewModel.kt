@@ -3,6 +3,8 @@ package com.relationship.graph.ui
 import android.app.Application
 import android.graphics.Bitmap
 import android.net.Uri
+import com.relationship.graph.data.local.StagedDecision
+import com.relationship.graph.data.local.StagedPersonEntity
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.relationship.graph.RelationshipApplication
@@ -34,6 +36,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collect
@@ -95,6 +98,8 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
     private val graphMode = MutableStateFlow(GraphMode.FAMILY)
     private val messageChannel = Channel<String>(Channel.BUFFERED)
     private val undoEventsChannel = Channel<UndoableAction>(Channel.UNLIMITED)
+    private val gedcomStateFlow = MutableStateFlow(GedcomUiState())
+    val gedcomUiState: StateFlow<GedcomUiState> = gedcomStateFlow.asStateFlow()
     val messages = messageChannel.receiveAsFlow()
 
     private val inferenceCandidatesFlow = combine(
@@ -409,6 +414,87 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
     private var undoSequence = 0L
     val undoEvents = undoEventsChannel.receiveAsFlow()
 
+
+    // ===== GEDCOM 导入/导出（v6） =====
+
+    fun onGedcomIntent(intent: GedcomIntent) {
+        when (intent) {
+            is GedcomIntent.Stage -> stageGedcomImport(intent.uri)
+            GedcomIntent.Apply -> applyGedcomImport()
+            GedcomIntent.Discard -> discardGedcomImport()
+            is GedcomIntent.SetDecision -> setStagedDecision(intent.personId, intent.decision)
+        }
+    }
+
+    fun exportGedcom(uri: Uri) {
+        viewModelScope.launch {
+            repository.exportGedcom(uri)
+                .onSuccess { sendMessage("GEDCOM 已导出") }
+                .onFailure { sendMessage(it.message ?: "GEDCOM 导出失败") }
+        }
+    }
+
+    private fun stageGedcomImport(uri: Uri) {
+        gedcomStateFlow.value = gedcomStateFlow.value.copy(working = true)
+        viewModelScope.launch {
+            repository.stageGedcomImport(uri)
+                .onSuccess { batch ->
+                    val people = repository.getStagedPeople(batch.id)
+                    gedcomStateFlow.value = GedcomUiState(
+                        batchId = batch.id,
+                        fileName = batch.fileName,
+                        personCount = batch.personCount,
+                        relationshipCount = batch.relationshipCount,
+                        stagedPeople = people,
+                    )
+                }
+                .onFailure { sendMessage(it.message ?: "GEDCOM 解析失败") }
+            gedcomStateFlow.value = gedcomStateFlow.value.copy(working = false)
+        }
+    }
+
+    private fun setStagedDecision(personId: String, decision: String) {
+        val current = gedcomStateFlow.value
+        val staged = current.stagedPeople.firstOrNull { it.id == personId } ?: return
+        val mergePersonId = if (decision == StagedDecision.MERGE) {
+            staged.mergePersonId ?: staged.suggestedMergePersonId
+        } else {
+            null
+        }
+        viewModelScope.launch {
+            repository.setStagedPersonDecision(personId, decision, mergePersonId)
+            gedcomStateFlow.value = current.copy(
+                stagedPeople = current.stagedPeople.map {
+                    if (it.id == personId) it.copy(decision = decision, mergePersonId = mergePersonId) else it
+                },
+            )
+        }
+    }
+
+    private fun applyGedcomImport() {
+        val batchId = gedcomStateFlow.value.batchId ?: return
+        gedcomStateFlow.value = gedcomStateFlow.value.copy(working = true)
+        viewModelScope.launch {
+            repository.applyGedcomImport(batchId)
+                .onSuccess { summary ->
+                    pushUndo(label = "GEDCOM 导入") {
+                        repository.rollbackGedcomImport(batchId)
+                    }
+                    sendMessage(summary)
+                    gedcomStateFlow.value = GedcomUiState()
+                }
+                .onFailure { sendMessage(it.message ?: "导入失败") }
+            gedcomStateFlow.value = gedcomStateFlow.value.copy(working = false)
+        }
+    }
+
+    private fun discardGedcomImport() {
+        val batchId = gedcomStateFlow.value.batchId ?: return
+        viewModelScope.launch {
+            repository.discardGedcomImport(batchId)
+            gedcomStateFlow.value = GedcomUiState()
+        }
+    }
     private companion object {
         const val UNDO_STACK_LIMIT = 20
     }
@@ -601,3 +687,21 @@ data class UndoableAction(
     val label: String,
     val undo: suspend () -> Unit,
 )
+
+// ===== GEDCOM 导入/导出（v6） =====
+
+data class GedcomUiState(
+    val batchId: String? = null,
+    val fileName: String? = null,
+    val personCount: Int = 0,
+    val relationshipCount: Int = 0,
+    val stagedPeople: List<StagedPersonEntity> = emptyList(),
+    val working: Boolean = false,
+)
+
+sealed class GedcomIntent {
+    data class Stage(val uri: Uri) : GedcomIntent()
+    data object Apply : GedcomIntent()
+    data object Discard : GedcomIntent()
+    data class SetDecision(val personId: String, val decision: String) : GedcomIntent()
+}

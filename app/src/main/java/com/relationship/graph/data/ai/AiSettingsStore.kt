@@ -19,6 +19,8 @@ data class AiSettings(
     val model: String = "",
     val hasApiKey: Boolean = false,
     val consentGranted: Boolean = false,
+    val extraPrompt: String = "",
+    val promptReplaceDefault: Boolean = false,
 ) {
     val isReady: Boolean
         get() = baseUrl.isNotBlank() && model.isNotBlank() && hasApiKey && consentGranted
@@ -41,6 +43,8 @@ class AiSettingsStore(
             model = preferences[MODEL].orEmpty(),
             hasApiKey = !secretStore.getSecret(API_KEY_SECRET).isNullOrBlank(),
             consentGranted = preferences[CONSENT_GRANTED] ?: false,
+            extraPrompt = preferences[EXTRA_PROMPT].orEmpty(),
+            promptReplaceDefault = preferences[PROMPT_REPLACE_DEFAULT] ?: false,
         )
     }.flowOn(Dispatchers.IO)
 
@@ -53,6 +57,8 @@ class AiSettingsStore(
         model: String,
         apiKey: String?,
         consentGranted: Boolean,
+        extraPrompt: String = "",
+        promptReplaceDefault: Boolean = false,
     ) = withContext(Dispatchers.IO) {
         if (apiKey != null) {
             secretStore.putSecret(API_KEY_SECRET, apiKey.trim())
@@ -61,6 +67,8 @@ class AiSettingsStore(
             preferences[BASE_URL] = baseUrl.trim().ifBlank { AiSettings.DEFAULT_BASE_URL }
             preferences[MODEL] = model.trim()
             preferences[CONSENT_GRANTED] = consentGranted
+            preferences[EXTRA_PROMPT] = extraPrompt
+            preferences[PROMPT_REPLACE_DEFAULT] = promptReplaceDefault
         }
         Unit
     }
@@ -69,6 +77,8 @@ class AiSettingsStore(
         val BASE_URL = stringPreferencesKey("base_url")
         val MODEL = stringPreferencesKey("model")
         val CONSENT_GRANTED = booleanPreferencesKey("consent_granted")
+        val EXTRA_PROMPT = stringPreferencesKey("extra_prompt")
+        val PROMPT_REPLACE_DEFAULT = booleanPreferencesKey("prompt_replace_default")
         const val API_KEY_SECRET = "ai_api_key"
     }
 }

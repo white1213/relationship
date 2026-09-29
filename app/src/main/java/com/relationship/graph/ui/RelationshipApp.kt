@@ -281,6 +281,8 @@ private fun MainNavigation(
             composable(Routes.Ai) {
                 AiAssistantScreen(
                     state = aiState,
+                    pendingCandidates = aiViewModel.pendingCandidates.collectAsStateWithLifecycle().value,
+                    isExtracting = aiViewModel.isExtracting.collectAsStateWithLifecycle().value,
                     onSend = aiViewModel::send,
                     onConfirmAction = { messageId, actionId ->
                         aiState.messages
@@ -292,13 +294,17 @@ private fun MainNavigation(
                     onRejectAction = aiViewModel::rejectAction,
                     onClear = aiViewModel::clearConversation,
                     onOpenSettings = { navController.navigate(Routes.AiSettings) },
+                    onExtractText = aiViewModel::extractFromText,
+                    onConfirmCandidate = aiViewModel::confirmCandidate,
+                    onDismissCandidate = aiViewModel::dismissCandidate,
+                    onConfirmAllCandidates = aiViewModel::confirmAllCandidates,
                 )
             }
             composable(Routes.AiSettings) {
                 AiSettingsScreen(
                     settings = aiState.settings,
-                    onSave = { baseUrl, model, apiKey, consent ->
-                        aiViewModel.saveSettings(baseUrl, model, apiKey, consent)
+                    onSave = { baseUrl, model, apiKey, consent, extraPrompt, promptReplace ->
+                        aiViewModel.saveSettings(baseUrl, model, apiKey, consent, extraPrompt, promptReplace)
                         navController.popBackStack()
                     },
                     onBack = navController::popBackStack,

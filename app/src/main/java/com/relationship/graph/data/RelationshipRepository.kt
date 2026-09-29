@@ -7,9 +7,17 @@ import com.google.gson.Gson
 import com.relationship.graph.data.local.AppDatabase
 import com.relationship.graph.data.local.GraphMode
 import com.relationship.graph.data.local.GraphPositionEntity
+import com.relationship.graph.data.gedcom.GedcomExporter
+import com.relationship.graph.data.gedcom.GedcomImportManager
+import com.relationship.graph.data.local.ImportBatchEntity
+import com.relationship.graph.data.local.AiCandidateEntity
 import com.relationship.graph.data.local.InferenceDismissalEntity
+import com.relationship.graph.data.local.StagedPersonEntity
+import com.relationship.graph.data.local.StagedRelationshipEntity
 import com.relationship.graph.data.local.MergeRecordEntity
 import com.relationship.graph.data.local.PersonEntity
+import com.relationship.graph.data.local.RelationCategory
+import com.relationship.graph.data.local.RelationDirection
 import com.relationship.graph.data.local.PersonTagEntity
 import com.relationship.graph.data.local.PresetRelationTypes
 import com.relationship.graph.data.local.RelationTypeEntity
@@ -130,6 +138,75 @@ class RelationshipRepository(
         if (positions.isNotEmpty()) dao.upsertGraphPositions(positions)
     }
 
+    // ===== GEDCOM 互通（v6） =====
+
+    suspend fun exportGedcom(uri: Uri): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val text = GedcomExporter.export(getGraphData())
+            context.contentResolver.openOutputStream(uri, "wt")?.use { output ->
+                output.write(text.toByteArray(Charsets.UTF_8))
+            } ?: error("无法写入所选位置")
+        }
+    }
+
+    suspend fun stageGedcomImport(uri: Uri): Result<ImportBatchEntity> = withContext(Dispatchers.IO) {
+        runCatching {
+            val fileName = queryFileName(uri) ?: "导入文件.ged"
+            val stream = context.contentResolver.openInputStream(uri) ?: error("无法读取所选文件")
+            stream.use { GedcomImportManager(database).stageImport(fileName, it) }
+        }
+    }
+
+    suspend fun applyGedcomImport(batchId: String): Result<String> =
+        runCatching { GedcomImportManager(database).applyImport(batchId) }
+
+    suspend fun rollbackGedcomImport(batchId: String): Result<Unit> =
+        runCatching { GedcomImportManager(database).rollbackImport(batchId) }
+
+    suspend fun getGedcomBatch(batchId: String): ImportBatchEntity? =
+        dao.getImportBatch(batchId)
+
+    suspend fun getStagedPeople(batchId: String): List<StagedPersonEntity> =
+        dao.getStagedPeople(batchId)
+
+    suspend fun getStagedRelationships(batchId: String): List<StagedRelationshipEntity> =
+        dao.getStagedRelationships(batchId)
+
+    suspend fun setStagedPersonDecision(id: String, decision: String, mergePersonId: String?) =
+        dao.updateStagedPersonDecision(id, decision, mergePersonId)
+
+    private fun queryFileName(uri: Uri): String? =
+        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            val index = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+            if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
+        }
+
+
+    // ===== AI 候选（v6） =====
+
+    fun observePendingAiCandidates(): Flow<List<AiCandidateEntity>> =
+        dao.observePendingAiCandidates()
+
+    suspend fun stageAiCandidates(candidates: List<AiCandidateEntity>) {
+        if (candidates.isNotEmpty()) dao.upsertAiCandidates(candidates)
+    }
+
+    suspend fun setAiCandidateStatus(id: String, status: String) =
+        dao.updateAiCandidateStatus(id, status)
+
+    suspend fun createCustomRelationTypeNamed(name: String): RelationTypeEntity? {
+        val existing = dao.findRelationTypeByName(name)
+        if (existing != null) return existing.takeIf { !it.isInferenceOnly }
+        val type = RelationTypeEntity(
+            id = "custom_" + UUID.randomUUID(),
+            name = name,
+            inverseName = null,
+            category = RelationCategory.SOCIAL,
+            direction = RelationDirection.BIDIRECTIONAL,
+        )
+        dao.upsertRelationType(type)
+        return type
+    }
     // ===== 人物合并（v6） =====
 
     /**
@@ -362,6 +439,10 @@ class RelationshipRepository(
         }
     }
 
+
+    suspend fun discardGedcomImport(batchId: String) {
+        dao.deleteImportBatch(batchId)
+    }
     private fun stableTagId(name: String): String =
         "tag_" + UUID.nameUUIDFromBytes(name.lowercase().toByteArray()).toString()
 }

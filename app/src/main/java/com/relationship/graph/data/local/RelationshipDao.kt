@@ -200,11 +200,23 @@ interface RelationshipDao {
     @Query("SELECT * FROM import_batches WHERE id = :id")
     suspend fun getImportBatch(id: String): ImportBatchEntity?
 
+    @Query("SELECT * FROM import_batches WHERE status = 'STAGED'")
+    suspend fun getStagedBatches(): List<ImportBatchEntity>
+
     @Query("UPDATE import_batches SET status = :status, rollbackJson = :rollbackJson WHERE id = :id")
     suspend fun updateImportBatchStatus(id: String, status: String, rollbackJson: String?)
 
     @Query("DELETE FROM import_batches WHERE id = :id")
     suspend fun deleteImportBatch(id: String)
+
+    @Query("DELETE FROM people WHERE id = :personId")
+    suspend fun deletePersonById(personId: String)
+
+    @Query("DELETE FROM relationships WHERE id = :relationshipId")
+    suspend fun deleteRelationshipById(relationshipId: String)
+
+    @Query("DELETE FROM relation_types WHERE id = :typeId")
+    suspend fun deleteRelationTypeById(typeId: String)
 
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertStagedPeople(people: List<StagedPersonEntity>)

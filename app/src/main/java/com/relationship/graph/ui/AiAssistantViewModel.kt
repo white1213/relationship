@@ -9,6 +9,7 @@ import com.relationship.graph.data.ai.AiActionPayload
 import com.relationship.graph.data.ai.AiPersonPayload
 import com.relationship.graph.data.ai.AiRelationshipPayload
 import com.relationship.graph.data.ai.AiSettings
+import com.relationship.graph.data.local.AiCandidateEntity
 import com.relationship.graph.data.FamilyRelationKind
 import com.relationship.graph.data.RelationshipSemantics
 import com.relationship.graph.data.local.Gender
@@ -86,9 +87,18 @@ class AiAssistantViewModel(application: Application) : AndroidViewModel(applicat
         model: String,
         apiKey: String?,
         consentGranted: Boolean,
+        extraPrompt: String = "",
+        promptReplaceDefault: Boolean = false,
     ) {
         viewModelScope.launch {
-            settingsStore.save(baseUrl, model, apiKey, consentGranted)
+            settingsStore.save(
+                baseUrl = baseUrl,
+                model = model,
+                apiKey = apiKey,
+                consentGranted = consentGranted,
+                extraPrompt = extraPrompt,
+                promptReplaceDefault = promptReplaceDefault,
+            )
         }
     }
 
@@ -382,7 +392,8 @@ class AiAssistantViewModel(application: Application) : AndroidViewModel(applicat
         "当前关系数据：\n${gson.toJson(context)}\n\n用户问题：\n$question"
     }
 
-    private fun systemPrompt(): String = """
+    private fun systemPrompt(): String {
+        val base = """
         你是中文人际与家庭关系助手。根据用户问题和提供的关系数据回答。
         只输出一个 JSON 对象，格式：
         {"answer":"中文回答","actions":[]}
@@ -396,7 +407,14 @@ class AiAssistantViewModel(application: Application) : AndroidViewModel(applicat
         涉及亲属称谓时，必须以 derivedRelationships 中同一对人物的 fromPersonLabel 和 toPersonLabel 为准。
         多个有效称谓用斜杠连接，不得自行改用其他地区叫法或替换方向。
         不确定时先提问，不得猜测人物或关系 ID。
-    """.trimIndent()
+        """.trimIndent()
+        val extra = uiState.value.settings.extraPrompt.trim()
+        return when {
+            extra.isEmpty() -> base
+            uiState.value.settings.promptReplaceDefault -> extra
+            else -> "$base\n\n用户附加要求：\n$extra"
+        }
+    }
 
     private fun String?.toGender(): Gender = when (this?.uppercase()) {
         "MALE" -> Gender.MALE
@@ -413,4 +431,171 @@ class AiAssistantViewModel(application: Application) : AndroidViewModel(applicat
         } else {
             MarriageKinshipMode.RESPECTIVE
         }
+    // ===== 文本提取候选（v6）：AI 只产生候选，确认后写库 =====
+
+    private val extracting = MutableStateFlow(false)
+    val pendingCandidates: StateFlow<List<AiCandidateEntity>> =
+        repository.observePendingAiCandidates()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val isExtracting: StateFlow<Boolean> = extracting
+
+    fun extractFromText(text: String) {
+        val trimmed = text.trim()
+        if (trimmed.isBlank() || extracting.value) return
+        viewModelScope.launch {
+            extracting.value = true
+            val settings = settingsStore.settings.first()
+            val apiKey = settingsStore.apiKey()
+            if (!settings.isReady || apiKey.isNullOrBlank()) {
+                messages.value += AiChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    role = AiMessageRole.SYSTEM,
+                    text = "请先在 AI 设置中完成配置并授权。",
+                )
+                extracting.value = false
+                return@launch
+            }
+            client.extract(settings = settings, apiKey = apiKey, text = trimmed)
+                .onSuccess { payload ->
+                    val existingPeople = repository.people.first()
+                    val tempIdByName = mutableMapOf<String, String>()
+                    val candidates = mutableListOf<AiCandidateEntity>()
+                    payload.persons.forEach { person ->
+                        val tempId = "t_" + UUID.randomUUID()
+                        tempIdByName[person.name.trim()] = tempId
+                        candidates += AiCandidateEntity(
+                            id = "c_" + UUID.randomUUID(),
+                            kind = "PERSON",
+                            payloadJson = gson.toJson(
+                                PersonCandidatePayload(
+                                    AiPersonPayload(
+                                        name = person.name.trim(),
+                                        gender = person.gender?.uppercase()?.takeIf { it in setOf("MALE", "FEMALE") },
+                                        birthday = person.birthday?.takeIf(String::isNotBlank),
+                                        notes = person.note?.takeIf(String::isNotBlank),
+                                    ),
+                                ),
+                            ),
+                            status = "PENDING",
+                            source = "TEXT_EXTRACT",
+                        )
+                    }
+                    payload.relations.forEach { relation ->
+                        val fromRef = existingPeople.firstOrNull { it.name == relation.from.trim() }?.id
+                            ?: tempIdByName[relation.from.trim()]
+                        val toRef = existingPeople.firstOrNull { it.name == relation.to.trim() }?.id
+                            ?: tempIdByName[relation.to.trim()]
+                        if (fromRef == null || toRef == null || fromRef == toRef) return@forEach
+                        candidates += AiCandidateEntity(
+                            id = "c_" + UUID.randomUUID(),
+                            kind = "RELATIONSHIP",
+                            payloadJson = gson.toJson(
+                                RelationshipCandidatePayload(
+                                    relationship = AiRelationshipPayload(
+                                        fromPersonId = fromRef,
+                                        toPersonId = toRef,
+                                        relationTypeId = "name:${relation.type?.trim().orEmpty().ifBlank { "相关" }}",
+                                        note = relation.note?.takeIf(String::isNotBlank),
+                                    ),
+                                    fromName = relation.from.trim(),
+                                    toName = relation.to.trim(),
+                                    typeName = relation.type?.trim().orEmpty().ifBlank { "相关" },
+                                ),
+                            ),
+                            status = "PENDING",
+                            source = "TEXT_EXTRACT",
+                        )
+                    }
+                    repository.stageAiCandidates(candidates)
+                    messages.value += AiChatMessage(
+                        id = UUID.randomUUID().toString(),
+                        role = AiMessageRole.SYSTEM,
+                        text = "已从文本解析出 ${payload.persons.size} 个人物、${payload.relations.size} 条关系，请在下方逐条确认。",
+                    )
+                }
+                .onFailure {
+                    messages.value += AiChatMessage(
+                        id = UUID.randomUUID().toString(),
+                        role = AiMessageRole.SYSTEM,
+                        text = it.message ?: "文本提取失败",
+                    )
+                }
+            extracting.value = false
+        }
+    }
+
+    fun confirmCandidate(candidate: AiCandidateEntity) {
+        viewModelScope.launch {
+            runCatching { writeCandidate(candidate) }
+                .onSuccess {
+                    repository.setAiCandidateStatus(candidate.id, "CONFIRMED")
+                    sendMessage("已写入")
+                }
+                .onFailure { sendMessage(it.message ?: "写入失败") }
+        }
+    }
+
+    fun dismissCandidate(candidate: AiCandidateEntity) {
+        viewModelScope.launch { repository.setAiCandidateStatus(candidate.id, "DISMISSED") }
+    }
+
+    fun confirmAllCandidates() {
+        viewModelScope.launch {
+            var ok = 0
+            pendingCandidates.value.forEach { candidate ->
+                runCatching { writeCandidate(candidate) }
+                    .onSuccess {
+                        repository.setAiCandidateStatus(candidate.id, "CONFIRMED")
+                        ok++
+                    }
+                    .onFailure {
+                        repository.setAiCandidateStatus(candidate.id, "DISMISSED")
+                    }
+            }
+            sendMessage("已写入 $ok 条候选")
+        }
+    }
+
+    private suspend fun writeCandidate(candidate: AiCandidateEntity) {
+        when (candidate.kind) {
+            "PERSON" -> {
+                val payload = gson.fromJson(candidate.payloadJson, PersonCandidatePayload::class.java)
+                createPerson(payload.person)
+            }
+            "RELATIONSHIP" -> {
+                val payload = gson.fromJson(
+                    candidate.payloadJson,
+                    RelationshipCandidatePayload::class.java,
+                )
+                val relationship = requireNotNull(payload.relationship)
+                var typeId = relationship.relationTypeId.orEmpty()
+                if (typeId.startsWith("name:")) {
+                    val name = typeId.removePrefix("name:")
+                    val existing = repository.relationTypes.first().firstOrNull { it.name == name }
+                    typeId = existing?.id
+                        ?: repository.createCustomRelationTypeNamed(name)?.id
+                        ?: error("无法创建关系类型：$name")
+                }
+                addRelationship(relationship.copy(relationTypeId = typeId))
+            }
+            else -> error("未知候选类型")
+        }
+    }
+
+    private fun sendMessage(text: String) {
+        messages.value += AiChatMessage(
+            id = UUID.randomUUID().toString(),
+            role = AiMessageRole.SYSTEM,
+            text = text,
+        )
+    }
 }
+
+data class PersonCandidatePayload(val person: AiPersonPayload)
+
+data class RelationshipCandidatePayload(
+    val relationship: AiRelationshipPayload?,
+    val fromName: String = "",
+    val toName: String = "",
+    val typeName: String = "",
+)

@@ -15,6 +15,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -32,13 +33,24 @@ import com.relationship.graph.ui.components.AppTopBar
 @Composable
 fun AiSettingsScreen(
     settings: AiSettings,
-    onSave: (baseUrl: String, model: String, apiKey: String?, consent: Boolean) -> Unit,
+    onSave: (
+        baseUrl: String,
+        model: String,
+        apiKey: String?,
+        consent: Boolean,
+        extraPrompt: String,
+        promptReplaceDefault: Boolean,
+    ) -> Unit,
     onBack: () -> Unit,
 ) {
     var baseUrl by remember(settings.baseUrl) { mutableStateOf(settings.baseUrl) }
     var model by remember(settings.model) { mutableStateOf(settings.model) }
     var apiKey by remember { mutableStateOf("") }
     var consent by remember(settings.consentGranted) { mutableStateOf(settings.consentGranted) }
+    var extraPrompt by remember(settings.extraPrompt) { mutableStateOf(settings.extraPrompt) }
+    var promptReplaceDefault by remember(settings.promptReplaceDefault) {
+        mutableStateOf(settings.promptReplaceDefault)
+    }
 
     Scaffold(
         topBar = {
@@ -100,6 +112,31 @@ fun AiSettingsScreen(
                 }
                 Switch(checked = consent, onCheckedChange = { consent = it })
             }
+            Text("自定义提示词", style = MaterialTheme.typography.titleMedium)
+            OutlinedTextField(
+                value = extraPrompt,
+                onValueChange = { extraPrompt = it },
+                label = { Text("附加/替换系统提示词") },
+                placeholder = { Text("例如：回答时优先使用粤语称谓习惯") },
+                minLines = 3,
+                maxLines = 8,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("完全替换默认提示词")
+                    Text(
+                        text = "关闭时作为附加要求拼在默认提示词之后（推荐）",
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = promptReplaceDefault, onCheckedChange = { promptReplaceDefault = it })
+            }
             Button(
                 onClick = {
                     onSave(
@@ -107,6 +144,8 @@ fun AiSettingsScreen(
                         model,
                         apiKey.takeIf(String::isNotBlank),
                         consent,
+                        extraPrompt,
+                        promptReplaceDefault,
                     )
                 },
                 enabled = baseUrl.isNotBlank() &&
