@@ -342,6 +342,19 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
+
+    fun mergePersons(absorbedId: String, survivorId: String) {
+        viewModelScope.launch {
+            runCatching { repository.mergePersons(survivorId = survivorId, absorbedId = absorbedId) }
+                .onSuccess { record ->
+                    pushUndo(label = "人物合并") {
+                        repository.restoreMerge(record.id)
+                    }
+                    sendMessage("人物已合并，关系与标签已迁移")
+                }
+                .onFailure { sendMessage(it.message ?: "合并失败") }
+        }
+    }
     /** 保存前的辈分校验；编辑页据结果弹窗拦截。 */
     suspend fun validateRelationship(
         fromPersonId: String,

@@ -3,6 +3,9 @@ package com.relationship.graph.ui.screens
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,6 +19,7 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AutoFixHigh
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Fullscreen
+import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.rounded.Search
@@ -57,6 +61,7 @@ import com.relationship.graph.data.local.GraphMode
 import com.relationship.graph.data.local.GraphPositionEntity
 import com.relationship.graph.data.RelationshipSemantics
 import com.relationship.graph.data.local.RelationTypeEntity
+import com.relationship.graph.data.local.PersonEntity
 import com.relationship.graph.data.local.RelationshipEntity
 import com.relationship.graph.data.inference.InferredRelationshipCandidate
 import com.relationship.graph.data.inference.InferenceConfidence
@@ -73,9 +78,24 @@ import com.relationship.graph.ui.graph.GraphCanvas
 import com.relationship.graph.ui.graph.GraphEdgeGroup
 import com.relationship.graph.ui.graph.GraphFocusEngine
 import com.relationship.graph.ui.graph.GraphFocusScope
+import com.relationship.graph.ui.graph.GraphImageExporter
+import com.relationship.graph.ui.graph.GraphLayoutEngine
+import com.relationship.graph.ui.graph.GraphLayoutResult
+import com.relationship.graph.ui.graph.LayoutPoint
 import com.relationship.graph.ui.graph.buildEdgeGroups
+import com.relationship.graph.ui.graph.decodeAvatarBitmap
 import com.relationship.graph.ui.relationshipSentence
+import android.content.Intent
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.max
+import kotlin.math.sin
 
 @Composable
 fun GraphScreen(
@@ -105,6 +125,11 @@ fun GraphScreen(
     var organizeRequestId by rememberSaveable { mutableIntStateOf(0) }
     var organizeUndo by remember { mutableStateOf<List<GraphPositionEntity>?>(null) }
     var showOrganizeUndo by remember { mutableStateOf(false) }
+    var exportDialogVisible by remember { mutableStateOf(false) }
+    var exportError by remember { mutableStateOf<String?>(null) }
+    var exporting by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     val modeRelationships = remember(
         state.relationships,
@@ -238,6 +263,9 @@ fun GraphScreen(
                 AppTopBar(
                     title = "关系图谱",
                     actions = {
+                        IconButton(onClick = { exportDialogVisible = true }) {
+                            Icon(Icons.Rounded.Image, contentDescription = "导出图片")
+                        }
                         IconButton(onClick = onOpenFullscreen) {
                             Icon(Icons.Rounded.Fullscreen, contentDescription = "横屏全屏")
                         }
@@ -684,6 +712,85 @@ fun GraphScreen(
         )
     }
 
+    if (exportDialogVisible) {
+        AlertDialog(
+            onDismissRequest = { if (!exporting) exportDialogVisible = false },
+            title = { Text("导出图谱图片") },
+            text = {
+                Column {
+                    Text(
+                        text = "将当前视图（${visiblePeople.size} 人 / ${visibleRelationships.size} 条关系）" +
+                            "导出为整图自适应的图片，生成后打开分享面板，可保存或发送。",
+                    )
+                    if (exporting) {
+                        Spacer(Modifier.height(12.dp))
+                        Text("正在生成…")
+                    }
+                    exportError?.let { error ->
+                        Spacer(Modifier.height(12.dp))
+                        Text(error, color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            },
+            confirmButton = {
+                Row {
+                    TextButton(
+                        enabled = !exporting,
+                        onClick = {
+                            exportError = null
+                            exporting = true
+                            scope.launch {
+                                val result = runCatching {
+                                    exportGraphImage(
+                                        context = context,
+                                        state = state,
+                                        people = visiblePeople,
+                                        relationships = visibleRelationships,
+                                        asSvg = false,
+                                    )
+                                }
+                                exporting = false
+                                result.onSuccess { file ->
+                                    exportDialogVisible = false
+                                    shareExportedFile(context, file, "image/png")
+                                }.onFailure { exportError = it.message ?: "导出失败" }
+                            }
+                        },
+                    ) { Text("PNG") }
+                    TextButton(
+                        enabled = !exporting,
+                        onClick = {
+                            exportError = null
+                            exporting = true
+                            scope.launch {
+                                val result = runCatching {
+                                    exportGraphImage(
+                                        context = context,
+                                        state = state,
+                                        people = visiblePeople,
+                                        relationships = visibleRelationships,
+                                        asSvg = true,
+                                    )
+                                }
+                                exporting = false
+                                result.onSuccess { file ->
+                                    exportDialogVisible = false
+                                    shareExportedFile(context, file, "image/svg+xml")
+                                }.onFailure { exportError = it.message ?: "导出失败" }
+                            }
+                        },
+                    ) { Text("SVG") }
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !exporting,
+                    onClick = { exportDialogVisible = false },
+                ) { Text("取消") }
+            },
+        )
+    }
+
     if (showLegend) {
         GraphLegendDialog(
             showInferenceSuggestions = state.showInferenceSuggestions,
@@ -1068,4 +1175,72 @@ private fun LegendLineRow(
         }
         Text(label)
     }
+}
+
+/** 用与画布相同的布局引擎重排当前视图，再交给导出器渲染。 */
+private suspend fun exportGraphImage(
+    context: android.content.Context,
+    state: AppUiState,
+    people: List<PersonEntity>,
+    relationships: List<RelationshipEntity>,
+    asSvg: Boolean,
+): java.io.File {
+    val pinnedPositions = state.graphPositions
+        .filter { it.mode == state.graphMode && it.isManuallyPinned }
+        .associate { it.personId to LayoutPoint(it.x, it.y) }
+    val layout = runCatching {
+        GraphLayoutEngine.layout(
+            people = people,
+            relationships = relationships,
+            relationTypes = state.relationTypes,
+            mode = state.graphMode,
+            myPersonId = state.myPersonId,
+            pinnedPositions = pinnedPositions,
+        )
+    }.getOrElse {
+        // 兜底：环形布局，保证任何数据都能导出。
+        val radius = max(140f, people.size * 12f)
+        GraphLayoutResult(
+            positions = people.mapIndexed { index, person ->
+                val angle = if (people.isEmpty()) 0.0 else 2.0 * PI * index / people.size
+                person.id to LayoutPoint(
+                    x = (cos(angle) * radius).toFloat(),
+                    y = (sin(angle) * radius).toFloat(),
+                )
+            }.toMap(),
+            routes = emptyList(),
+            generationByPerson = emptyMap(),
+            conflicts = 0,
+        )
+    }
+    val avatars = people.mapNotNull { person ->
+        person.avatarPath?.let { path ->
+            withContext(Dispatchers.IO) { decodeAvatarBitmap(path) }?.let { person.id to it }
+        }
+    }.toMap()
+    val input = GraphImageExporter.Input(
+        people = people,
+        routes = layout.routes,
+        positions = layout.positions,
+        relationTypes = state.relationTypes,
+        ageOrders = state.relativeAgeOrders,
+        relationshipById = relationships.associateBy { it.id },
+        avatars = avatars,
+        myPersonId = state.myPersonId,
+    )
+    return if (asSvg) {
+        GraphImageExporter.exportSvg(context, input)
+    } else {
+        GraphImageExporter.exportPng(context, input)
+    }
+}
+
+private fun shareExportedFile(context: android.content.Context, file: java.io.File, mimeType: String) {
+    val uri = GraphImageExporter.shareUri(context, file)
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = mimeType
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(intent, "分享图谱"))
 }

@@ -19,6 +19,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.MergeType
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -73,11 +74,15 @@ fun PersonDetailScreen(
     onClearRelativeAge: (String, String) -> Unit,
     onDeletePerson: (PersonEntity) -> Unit,
     onDeleteRelationship: (RelationshipEntity) -> Unit,
+    onMergePersons: (absorbedId: String, survivorId: String) -> Unit = { _, _ -> },
 ) {
     val person = state.person(personId)
     var showDeletePerson by remember { mutableStateOf(false) }
     var relationshipToDelete by remember { mutableStateOf<RelationshipEntity?>(null) }
     var ageOrderDialogPersonId by remember { mutableStateOf<String?>(null) }
+    var mergeDialogVisible by remember { mutableStateOf(false) }
+    var mergeTargetId by remember { mutableStateOf<String?>(null) }
+    var mergeQuery by remember { mutableStateOf("") }
 
     Scaffold(
         topBar = {
@@ -154,6 +159,14 @@ fun PersonDetailScreen(
             }
             person.notes.takeIf(String::isNotBlank)?.let {
                 DetailText(label = "备注", value = it, modifier = Modifier.fillMaxWidth())
+            }
+
+            OutlinedButton(
+                onClick = { mergeDialogVisible = true },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Rounded.MergeType, contentDescription = null)
+                Text("合并重复人物")
             }
 
             val ageOrders = state.relativeAgeOrders.filter {
@@ -448,6 +461,78 @@ fun PersonDetailScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showDeletePerson = false }) { Text("取消") }
+            },
+        )
+    }
+
+    if (mergeDialogVisible && person != null) {
+        val candidates = state.people
+            .filter { it.id != person.id }
+            .filter { mergeQuery.isBlank() || it.name.contains(mergeQuery.trim()) }
+        AlertDialog(
+            onDismissRequest = { if (mergeTargetId == null) mergeDialogVisible = false },
+            title = { Text("合并重复人物") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (mergeTargetId == null) {
+                        Text(
+                            text = "选择要并入「${person.name}」的重复人物：其全部关系、标签和备注会迁移过来，" +
+                                "合并后可撤销。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        OutlinedTextField(
+                            value = mergeQuery,
+                            onValueChange = { mergeQuery = it },
+                            label = { Text("搜索人物") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        LazyColumn(modifier = Modifier.heightIn(max = 320.dp)) {
+                            items(candidates, key = { it.id }) { candidate ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { mergeTargetId = candidate.id }
+                                        .padding(vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(candidate.name, modifier = Modifier.weight(1f))
+                                    Text(
+                                        text = candidate.phone.takeIf(String::isNotBlank) ?: "",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        val target = state.person(mergeTargetId)
+                        Text(
+                            text = "把「${target?.name ?: "未知"}」并入「${person.name}」？" +
+                                "其全部关系、标签和备注将迁移到「${person.name}」，原人物将删除。",
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                if (mergeTargetId == null) {
+                    TextButton(onClick = { mergeDialogVisible = false }) { Text("取消") }
+                } else {
+                    TextButton(
+                        onClick = {
+                            onMergePersons(requireNotNull(mergeTargetId), person.id)
+                            mergeDialogVisible = false
+                            mergeTargetId = null
+                            mergeQuery = ""
+                        },
+                    ) { Text("确认合并") }
+                }
+            },
+            dismissButton = {
+                if (mergeTargetId != null) {
+                    TextButton(onClick = { mergeTargetId = null }) { Text("上一步") }
+                }
             },
         )
     }

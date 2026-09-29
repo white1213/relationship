@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import com.relationship.graph.data.inference.InferenceConfidence
 import com.relationship.graph.data.inference.KinshipQueryEngine
 import com.relationship.graph.data.inference.KinshipQueryResult
+import com.relationship.graph.data.inference.RelationshipPathFinder
 import com.relationship.graph.data.local.PersonEntity
 import com.relationship.graph.ui.AppUiState
 import com.relationship.graph.ui.components.AppTopBar
@@ -166,6 +167,28 @@ fun KinshipQueryScreen(state: AppUiState) {
                     target = targetPerson,
                     result = result,
                 )
+                val paths = remember(
+                    referencePersonId,
+                    targetPersonId,
+                    state.relationships,
+                    state.relationTypes,
+                    state.people,
+                    state.relativeAgeOrders,
+                ) {
+                    if (referencePersonId != null && targetPersonId != null) {
+                        RelationshipPathFinder.find(
+                            anchorPersonId = referencePersonId!!,
+                            targetPersonId = targetPersonId!!,
+                            relationships = state.relationships,
+                            relationTypes = state.relationTypes,
+                            people = state.people,
+                            ageOrders = state.relativeAgeOrders,
+                        )
+                    } else {
+                        emptyList()
+                    }
+                }
+                PathResultCard(referencePerson, targetPerson, paths, state.people)
             }
         }
     }
@@ -330,4 +353,57 @@ private fun InferenceConfidence.displayName(): String = when (this) {
     InferenceConfidence.HIGH -> "可信度高"
     InferenceConfidence.MEDIUM_HIGH -> "可信度中高"
     InferenceConfidence.MEDIUM -> "可信度中等"
+}
+
+@Composable
+private fun PathResultCard(
+    reference: PersonEntity?,
+    target: PersonEntity?,
+    paths: List<RelationshipPathFinder.PathResult>,
+    people: List<PersonEntity>,
+) {
+    if (reference == null || target == null) return
+    val nameById = remember(paths) { people.associate { it.id to it.name.ifBlank { "未命名" } } }
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text("关系路径", style = MaterialTheme.typography.titleMedium)
+            if (paths.isEmpty()) {
+                Text(
+                    text = "两人之间没有找到 6 步以内的关系路径。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                paths.forEachIndexed { index, path ->
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = pathChainText(path, nameById),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Text(
+                            text = "共 ${path.hops.size} 步",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun pathChainText(
+    path: RelationshipPathFinder.PathResult,
+    nameById: Map<String, String>,
+): String = buildString {
+    path.personIds.forEachIndexed { index, personId ->
+        if (index > 0) {
+            val hop = path.hops.getOrNull(index - 1)
+            append(" —${hop?.label ?: "相关"}→ ")
+        }
+        append(nameById[personId] ?: "未知")
+    }
 }

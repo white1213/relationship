@@ -3,10 +3,12 @@ package com.relationship.graph.data
 import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
+import com.google.gson.Gson
 import com.relationship.graph.data.local.AppDatabase
 import com.relationship.graph.data.local.GraphMode
 import com.relationship.graph.data.local.GraphPositionEntity
 import com.relationship.graph.data.local.InferenceDismissalEntity
+import com.relationship.graph.data.local.MergeRecordEntity
 import com.relationship.graph.data.local.PersonEntity
 import com.relationship.graph.data.local.PersonTagEntity
 import com.relationship.graph.data.local.PresetRelationTypes
@@ -20,6 +22,7 @@ import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
+import androidx.room.withTransaction
 
 data class GraphData(
     val people: List<PersonEntity>,
@@ -37,6 +40,7 @@ class RelationshipRepository(
     private val database: AppDatabase,
 ) {
     private val dao = database.relationshipDao()
+    private val gson = Gson()
 
     val people: Flow<List<PersonEntity>> = dao.observePeople()
     val tagEntities: Flow<List<TagEntity>> = dao.observeTags()
@@ -125,6 +129,146 @@ class RelationshipRepository(
     suspend fun restoreGraphPositions(positions: List<GraphPositionEntity>) {
         if (positions.isNotEmpty()) dao.upsertGraphPositions(positions)
     }
+
+    // ===== 人物合并（v6） =====
+
+    /**
+     * 把 absorbed 合并进 survivor：字段空白处补齐、备注拼接、关系迁移并去重、
+     * 标签并集；整个操作在一个事务里，并写入快照供一键撤销。
+     */
+    suspend fun mergePersons(survivorId: String, absorbedId: String): MergeRecordEntity {
+        require(survivorId != absorbedId) { "不能与自己合并" }
+        var absorbedAvatarPath: String? = null
+        val record = database.withTransaction {
+            val survivor = dao.getPerson(survivorId) ?: error("主人物不存在")
+            val absorbed = dao.getPerson(absorbedId) ?: error("被合并人物不存在")
+            val now = System.currentTimeMillis()
+            val allRelations = dao.getAllRelationships()
+            val absorbedRelations = allRelations.filter {
+                it.fromPersonId == absorbedId || it.toPersonId == absorbedId
+            }
+            val survivorPairTypes = allRelations
+                .filter { it.fromPersonId == survivorId || it.toPersonId == survivorId }
+                .map { relationKey(it.fromPersonId, it.toPersonId, it.relationTypeId) }
+                .toSet()
+            val survivorTags = dao.getAllPersonTags().filter { it.personId == survivorId }
+            val absorbedTags = dao.getAllPersonTags().filter { it.personId == absorbedId }
+            val dismissals = dao.getAllInferenceDismissals().filter {
+                it.fromPersonId == absorbedId || it.toPersonId == absorbedId
+            }
+            val ageOrders = dao.getAllRelativeAgeOrders().filter {
+                it.firstPersonId == absorbedId || it.secondPersonId == absorbedId
+            }
+            val positions = dao.getAllGraphPositions().filter { it.personId == absorbedId }
+
+            val snapshot = MergeSnapshot(
+                survivor = survivor,
+                absorbed = absorbed,
+                survivorTags = survivorTags,
+                absorbedTags = absorbedTags,
+                absorbedRelations = absorbedRelations,
+                dismissals = dismissals,
+                ageOrders = ageOrders,
+                positions = positions,
+            )
+            val record = MergeRecordEntity(
+                id = "merge_" + UUID.randomUUID(),
+                survivorId = survivorId,
+                snapshotJson = gson.toJson(snapshot),
+            )
+            dao.insertMergeRecord(record)
+
+            val merged = survivor.copy(
+                phone = survivor.phone.ifBlank { absorbed.phone },
+                birthday = survivor.birthday.ifBlank { absorbed.birthday },
+                birthdayCalendar = survivor.birthdayCalendar ?: absorbed.birthdayCalendar,
+                lunarMonth = survivor.lunarMonth ?: absorbed.lunarMonth,
+                lunarDay = survivor.lunarDay ?: absorbed.lunarDay,
+                isLeapMonth = survivor.isLeapMonth ?: absorbed.isLeapMonth,
+                address = survivor.address.ifBlank { absorbed.address },
+                notes = listOf(survivor.notes, absorbed.notes)
+                    .filter(String::isNotBlank)
+                    .joinToString("\n———\n"),
+                avatarPath = survivor.avatarPath ?: absorbed.avatarPath,
+                isDeceased = survivor.isDeceased ?: absorbed.isDeceased,
+                deathDate = survivor.deathDate ?: absorbed.deathDate,
+                deathCalendar = survivor.deathCalendar ?: absorbed.deathCalendar,
+                lunarDeathMonth = survivor.lunarDeathMonth ?: absorbed.lunarDeathMonth,
+                lunarDeathDay = survivor.lunarDeathDay ?: absorbed.lunarDeathDay,
+                isLeapDeathMonth = survivor.isLeapDeathMonth ?: absorbed.isLeapDeathMonth,
+                updatedAt = now,
+            )
+            dao.upsertPerson(merged)
+
+            absorbedRelations.forEach { relation ->
+                val repointFrom =
+                    if (relation.fromPersonId == absorbedId) survivorId else relation.fromPersonId
+                val repointTo =
+                    if (relation.toPersonId == absorbedId) survivorId else relation.toPersonId
+                val duplicated = relationKey(repointFrom, repointTo, relation.relationTypeId) in
+                    survivorPairTypes
+                if (duplicated) {
+                    dao.deleteRelationship(relation)
+                } else {
+                    dao.upsertRelationship(
+                        relation.copy(
+                            fromPersonId = repointFrom,
+                            toPersonId = repointTo,
+                            updatedAt = now,
+                        ),
+                    )
+                }
+            }
+
+            val newTagRows = absorbedTags
+                .filter { absorbedTag -> survivorTags.none { it.tagId == absorbedTag.tagId } }
+                .map { PersonTagEntity(personId = survivorId, tagId = it.tagId) }
+            if (newTagRows.isNotEmpty()) dao.insertPersonTags(newTagRows)
+            dao.deletePersonTags(absorbedId)
+            dismissals.forEach {
+                dao.deleteInferenceDismissal(it.fromPersonId, it.toPersonId, it.ruleId)
+            }
+            ageOrders.forEach {
+                dao.deleteRelativeAgeOrder(it.firstPersonId, it.secondPersonId)
+            }
+            dao.deletePerson(absorbed)
+            absorbedAvatarPath = absorbed.avatarPath
+            record
+        }
+        deleteAvatarIfUnused(absorbedAvatarPath)
+        return record
+    }
+
+    /** 按快照撤销一次合并：恢复被合并者、关系指向、标签与相关记录。 */
+    suspend fun restoreMerge(recordId: String) {
+        database.withTransaction {
+            val record = dao.getMergeRecord(recordId) ?: error("合并记录不存在或已撤销")
+            val snapshot = gson.fromJson(record.snapshotJson, MergeSnapshot::class.java)
+            dao.upsertPerson(snapshot.survivor)
+            dao.upsertPerson(snapshot.absorbed)
+            snapshot.absorbedRelations.forEach { dao.upsertRelationship(it) }
+            dao.deletePersonTags(snapshot.survivor.id)
+            dao.insertPersonTags(snapshot.survivorTags + snapshot.absorbedTags)
+            snapshot.dismissals.forEach { dao.upsertInferenceDismissal(it) }
+            snapshot.ageOrders.forEach { dao.upsertRelativeAgeOrder(it) }
+            snapshot.positions.forEach { dao.upsertGraphPosition(it) }
+            dao.deleteMergeRecord(recordId)
+        }
+    }
+
+    private fun relationKey(from: String, to: String, typeId: String): String =
+        listOf(from, to).sorted().joinToString("\u0000") + "\u0000" + typeId
+
+    private data class MergeSnapshot(
+        val survivor: PersonEntity,
+        val absorbed: PersonEntity,
+        val survivorTags: List<PersonTagEntity>,
+        val absorbedTags: List<PersonTagEntity>,
+        val absorbedRelations: List<RelationshipEntity>,
+        val dismissals: List<InferenceDismissalEntity>,
+        val ageOrders: List<RelativeAgeOrderEntity>,
+        val positions: List<GraphPositionEntity>,
+    )
 
     suspend fun dismissInference(dismissal: InferenceDismissalEntity) {
         dao.upsertInferenceDismissal(dismissal)

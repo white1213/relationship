@@ -326,6 +326,7 @@ private fun MainNavigation(
                     onClearRelativeAge = viewModel::clearRelativeAge,
                     onDeletePerson = viewModel::deletePerson,
                     onDeleteRelationship = viewModel::deleteRelationship,
+                    onMergePersons = viewModel::mergePersons,
                 )
             }
             composable(

@@ -28,14 +28,15 @@ fun rememberAvatarImages(people: List<PersonEntity>): Map<String, ImageBitmap> {
     LaunchedEffect(avatarKeys) {
         images = withContext(Dispatchers.IO) {
             avatarKeys.mapNotNull { (personId, path) ->
-                decodeAvatar(path)?.let { personId to it.asImageBitmap() }
+                decodeAvatarBitmap(path)?.let { personId to it.asImageBitmap() }
             }.toMap()
         }
     }
     return images
 }
 
-private fun decodeAvatar(path: String): Bitmap? {
+/** 解码头像文件为最大 128px 的位图；文件缺失或损坏返回 null。导出与画布共用。 */
+fun decodeAvatarBitmap(path: String): Bitmap? {
     if (!File(path).exists()) return null
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     BitmapFactory.decodeFile(path, bounds)
