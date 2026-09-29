@@ -21,6 +21,9 @@ import com.relationship.graph.data.local.RelationshipSource
 import com.relationship.graph.data.local.RelationshipEntity
 import com.relationship.graph.data.local.RelativeAgeOrderEntity
 import com.relationship.graph.data.local.TagEntity
+import com.relationship.graph.data.local.BirthdayCalendar
+import com.relationship.graph.data.calendar.LunarDates
+import com.relationship.graph.reminder.BirthdayReminderScheduler
 import com.relationship.graph.data.inference.InferenceEngine
 import com.relationship.graph.data.inference.InferenceConfirmationMode
 import com.relationship.graph.data.inference.InferredRelationshipCandidate
@@ -199,6 +202,18 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
         notes: String,
         tagNames: List<String>,
         existing: PersonEntity?,
+        birthdayCalendar: BirthdayCalendar = BirthdayCalendar.SOLAR,
+        lunarMonth: Int? = null,
+        lunarDay: Int? = null,
+        isLeapMonth: Boolean = false,
+        lunarYear: Int? = null,
+        isDeceased: Boolean = false,
+        deathDate: String = "",
+        deathCalendar: BirthdayCalendar = BirthdayCalendar.SOLAR,
+        lunarDeathMonth: Int? = null,
+        lunarDeathDay: Int? = null,
+        isLeapDeathMonth: Boolean = false,
+        lunarDeathYear: Int? = null,
     ) {
         if (name.isBlank()) {
             sendMessage("请输入姓名")
@@ -206,6 +221,32 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
         }
         viewModelScope.launch {
             val now = System.currentTimeMillis()
+            // 农历生日：lunar_* 列是唯一事实来源；年份齐备时顺手把公历缓存写进 birthday。
+            val usesLunarBirthday = birthdayCalendar == BirthdayCalendar.LUNAR &&
+                lunarMonth != null && lunarDay != null
+            val storedBirthday = when {
+                !usesLunarBirthday -> birthday.trim()
+                lunarYear != null -> LunarDates.toSolar(
+                    lunarYear,
+                    lunarMonth ?: return@launch,
+                    lunarDay ?: return@launch,
+                    isLeapMonth,
+                )?.toString().orEmpty()
+                else -> ""
+            }
+            val usesLunarDeath = isDeceased && deathCalendar == BirthdayCalendar.LUNAR &&
+                lunarDeathMonth != null && lunarDeathDay != null
+            val storedDeathDate = when {
+                !isDeceased -> ""
+                !usesLunarDeath -> deathDate.trim()
+                lunarDeathYear != null -> LunarDates.toSolar(
+                    lunarDeathYear,
+                    lunarDeathMonth ?: return@launch,
+                    lunarDeathDay ?: return@launch,
+                    isLeapDeathMonth,
+                )?.toString().orEmpty()
+                else -> ""
+            }
             repository.savePerson(
                 person = PersonEntity(
                     id = id,
@@ -213,15 +254,30 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
                     gender = gender,
                     avatarPath = avatarPath,
                     phone = phone.trim(),
-                    birthday = birthday.trim(),
+                    birthday = storedBirthday,
                     address = address.trim(),
                     notes = notes.trim(),
                     createdAt = existing?.createdAt ?: now,
                     updatedAt = now,
+                    birthdayCalendar = if (usesLunarBirthday) BirthdayCalendar.LUNAR else null,
+                    lunarMonth = if (usesLunarBirthday) lunarMonth else null,
+                    lunarDay = if (usesLunarBirthday) lunarDay else null,
+                    isLeapMonth = if (usesLunarBirthday) isLeapMonth else null,
+                    isDeceased = if (isDeceased) true else null,
+                    deathDate = storedDeathDate.ifEmpty { null },
+                    deathCalendar = when {
+                        !isDeceased -> null
+                        usesLunarDeath -> BirthdayCalendar.LUNAR
+                        else -> BirthdayCalendar.SOLAR
+                    },
+                    lunarDeathMonth = if (usesLunarDeath) lunarDeathMonth else null,
+                    lunarDeathDay = if (usesLunarDeath) lunarDeathDay else null,
+                    isLeapDeathMonth = if (usesLunarDeath) isLeapDeathMonth else null,
                 ),
                 tagNames = tagNames,
             )
             sendMessage("人物资料已保存")
+            BirthdayReminderScheduler.requestReschedule(getApplication())
         }
     }
 

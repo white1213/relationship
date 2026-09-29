@@ -1,5 +1,9 @@
 package com.relationship.graph.ui.screens
 
+import android.Manifest
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -24,17 +28,22 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.relationship.graph.BuildConfig
 import com.relationship.graph.RelationshipApplication
+import com.relationship.graph.data.preferences.ReminderPreferencesStore
 import com.relationship.graph.ui.AppUiState
+import kotlinx.coroutines.launch
 import com.relationship.graph.ui.components.AppTopBar
 import com.relationship.graph.ui.components.MyPersonPickerDialog
 import com.relationship.graph.ui.security.rememberBiometricPromptLauncher
@@ -54,6 +63,19 @@ fun SettingsScreen(
         title = "启用生物识别",
         onSuccess = { app.appLockController.setBiometricEnabled(true) },
     )
+    val scope = rememberCoroutineScope()
+    var reminderEnabled by remember { mutableStateOf(true) }
+    LaunchedEffect(Unit) {
+        ReminderPreferencesStore(app).enabled.collect { reminderEnabled = it }
+    }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (!granted) {
+            // 拒绝后开关保留，但不发通知；Worker 会检查通知可用性。
+            reminderEnabled = true
+        }
+    }
 
     Scaffold(
         topBar = { AppTopBar(title = "设置") },
@@ -154,6 +176,41 @@ fun SettingsScreen(
                         )
                     }
                     Icon(Icons.Rounded.ChevronRight, contentDescription = null)
+                }
+            }
+
+            Text("提醒", style = MaterialTheme.typography.titleMedium)
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = 14.dp),
+                    ) {
+                        Text("生日与忌日提醒")
+                        Text(
+                            text = "每天上午 9 点左右本地通知，当天的生日和忌日提醒，不联网",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = reminderEnabled,
+                        onCheckedChange = { enabled ->
+                            reminderEnabled = enabled
+                            scope.launch {
+                                ReminderPreferencesStore(app).setEnabled(enabled)
+                            }
+                            if (enabled && Build.VERSION.SDK_INT >= 33) {
+                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            }
+                        },
+                    )
                 }
             }
 

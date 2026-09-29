@@ -535,10 +535,12 @@ fun GraphCanvas(
                     NodeCategory.MIXED -> familyColor
                     NodeCategory.NONE -> neutralColor
                 }
+                val isDeceased = person.deceased
                 val fill = when {
                     !isHighlighted -> muted.copy(alpha = 0.3f)
                     isDragged -> Color(0xFF275EAD)
                     isMyPerson -> Color(0xFF244D86)
+                    isDeceased -> Color(0xFF8C99A8)
                     else -> categoryColor
                 }
                 if (isDragged || isMyPerson || isSelected) {
@@ -572,6 +574,13 @@ fun GraphCanvas(
                     }
                     if (!isHighlighted) {
                         drawCircle(color = muted.copy(alpha = 0.58f), radius = radius, center = position)
+                    }
+                    if (isDeceased) {
+                        drawCircle(
+                            color = Color(0xFF5B6570).copy(alpha = 0.45f),
+                            radius = radius,
+                            center = position,
+                        )
                     }
                 } else {
                     drawCircle(color = fill, radius = radius, center = position)
@@ -622,6 +631,27 @@ fun GraphCanvas(
                         radius = radius,
                         center = position,
                         style = Stroke(width = if (isMyPerson || isSelected) 2.6f else 1.2f),
+                    )
+                }
+
+                if (isDeceased) {
+                    val badgeCenter = position + Offset(radius * 0.78f, -radius * 0.78f)
+                    drawCircle(color = Color.White, radius = 10f, center = badgeCenter)
+                    drawCircle(color = Color(0xFF5B6570), radius = 8f, center = badgeCenter)
+                    val badge = textMeasurer.measure(
+                        AnnotatedString("故"),
+                        style = TextStyle(
+                            color = Color.White,
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Bold,
+                        ),
+                    )
+                    drawText(
+                        textLayoutResult = badge,
+                        topLeft = Offset(
+                            badgeCenter.x - badge.size.width / 2f,
+                            badgeCenter.y - badge.size.height / 2f,
+                        ),
                     )
                 }
 

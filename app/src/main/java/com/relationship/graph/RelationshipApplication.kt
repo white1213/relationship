@@ -10,10 +10,12 @@ import com.relationship.graph.data.local.AppDatabase
 import com.relationship.graph.data.preferences.GraphPreferencesStore
 import com.relationship.graph.data.security.SecretStore
 import com.relationship.graph.data.security.SecurityStore
+import com.relationship.graph.reminder.BirthdayReminderScheduler
 import com.relationship.graph.security.AppLockController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 class RelationshipApplication : Application() {
     lateinit var container: AppContainer
@@ -45,6 +47,8 @@ class RelationshipApplication : Application() {
             ),
         )
         appLockController = AppLockController(this, securityStore, appScope)
+        BirthdayReminderScheduler.ensureChannel(this)
+        appScope.launch { BirthdayReminderScheduler.ensureDailyWork(this@RelationshipApplication) }
     }
 }
 

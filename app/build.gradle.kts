@@ -113,7 +113,9 @@ dependencies {
 
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.biometric)
+    implementation(libs.androidx.work.runtime)
     implementation(libs.sqlcipher)
+    implementation(libs.lunar)
     implementation(libs.coil.compose)
     implementation(libs.gson)
     implementation(libs.okhttp)

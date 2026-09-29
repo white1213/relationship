@@ -49,6 +49,8 @@ import com.relationship.graph.data.inference.InferenceConfirmationMode
 import com.relationship.graph.data.inference.InferenceRule
 import com.relationship.graph.data.inference.InferredRelationshipCandidate
 import com.relationship.graph.ui.AppUiState
+import com.relationship.graph.ui.birthdayDisplayLine
+import com.relationship.graph.ui.deathDayDisplayLine
 import com.relationship.graph.ui.components.AppTopBar
 import com.relationship.graph.ui.components.EmptyState
 import com.relationship.graph.ui.components.PersonAvatar
@@ -126,8 +128,14 @@ fun PersonDetailScreen(
                     person.phone.takeIf(String::isNotBlank)?.let {
                         DetailText(label = "电话", value = it)
                     }
-                    person.birthday.takeIf(String::isNotBlank)?.let {
+                    birthdayDisplayLine(person)?.let {
                         DetailText(label = "生日", value = it)
+                    }
+                    deathDayDisplayLine(person)?.let {
+                        DetailText(label = "忌日", value = it)
+                    }
+                    if (person.deceased) {
+                        DetailText(label = "状态", value = "已故")
                     }
                 }
             }
