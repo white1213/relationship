@@ -195,8 +195,9 @@ object GraphLayoutEngine {
         }
 
         val unitByPerson = personIds.associateWith(spouseUnits::find)
+        val nameById = people.associate { it.id to it.name }
         val membersByUnit = personIds.groupBy(unitByPerson::getValue)
-            .mapValues { (_, members) -> members.sortedBy { people.first { person -> person.id == it }.name } }
+            .mapValues { (_, members) -> members.sortedBy { nameById.getValue(it) } }
         val generationByUnit = membersByUnit.mapValues { (_, members) ->
             members.map { generationByPerson.getValue(it) }.groupingBy { it }.eachCount()
                 .maxByOrNull { it.value }?.key ?: 0

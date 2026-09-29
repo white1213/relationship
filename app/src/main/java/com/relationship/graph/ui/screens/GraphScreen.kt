@@ -146,20 +146,41 @@ fun GraphScreen(
     val edgeGroups = remember(visibleRelationships, state.relationTypes) {
         buildEdgeGroups(visibleRelationships, state.relationTypes)
     }
-    val searchHighlightedPeople = highlightedPersonIds(state, visiblePeople, visibleRelationships)
-    val searchHighlightedEdges = highlightedEdgeKeys(
-        state = state,
-        people = visiblePeople,
-        relationships = visibleRelationships,
-        groups = edgeGroups,
-    )
+    val searchHighlightedPeople = remember(
+        state.searchQuery,
+        state.selectedCategory,
+        state.relationTypes,
+        state.graphMode,
+        state.tagsByPerson,
+        visiblePeople,
+        visibleRelationships,
+    ) {
+        highlightedPersonIds(state, visiblePeople, visibleRelationships)
+    }
+    val searchHighlightedEdges = remember(
+        searchHighlightedPeople,
+        state.searchQuery,
+        state.selectedCategory,
+        state.graphMode,
+        state.relationTypes,
+        edgeGroups,
+    ) {
+        highlightedEdgeKeys(
+            state = state,
+            people = visiblePeople,
+            relationships = visibleRelationships,
+            groups = edgeGroups,
+        )
+    }
     val focusedRelationshipIds = focusResult?.relationshipIds.orEmpty()
-    val focusedEdgeKeys = edgeGroups
-        .filter { group ->
-            group.relationships.any { it.id in focusedRelationshipIds }
-        }
-        .map { it.key }
-        .toSet()
+    val focusedEdgeKeys = remember(edgeGroups, focusedRelationshipIds) {
+        edgeGroups
+            .filter { group ->
+                group.relationships.any { it.id in focusedRelationshipIds }
+            }
+            .map { it.key }
+            .toSet()
+    }
     val highlightedPeople = when {
         focusScope != null -> null
         focusPersonId == null -> searchHighlightedPeople

@@ -18,6 +18,7 @@ import com.relationship.graph.data.local.RelationshipEntity
 import com.relationship.graph.data.local.RelationshipSource
 import com.relationship.graph.data.inference.InferenceEngine
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -25,6 +26,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 enum class AiMessageRole {
     USER,
@@ -110,27 +112,30 @@ class AiAssistantViewModel(application: Application) : AndroidViewModel(applicat
                 text = message,
             )
             sending.value = true
-            val result = client.complete(
-                settings = settings,
-                apiKey = apiKey,
-                systemPrompt = systemPrompt(),
-                userPrompt = buildUserPrompt(message),
-            )
-            sending.value = false
-            result.onSuccess { completion ->
-                val proposals = completion.proposedActions.mapNotNull(::toProposal)
-                messages.value = messages.value + AiChatMessage(
-                    id = UUID.randomUUID().toString(),
-                    role = AiMessageRole.ASSISTANT,
-                    text = completion.answer,
-                    proposedActions = proposals,
+            try {
+                val result = client.complete(
+                    settings = settings,
+                    apiKey = apiKey,
+                    systemPrompt = systemPrompt(),
+                    userPrompt = buildUserPrompt(message),
                 )
-            }.onFailure {
-                messages.value = messages.value + AiChatMessage(
-                    id = UUID.randomUUID().toString(),
-                    role = AiMessageRole.SYSTEM,
-                    text = it.message ?: "AI 请求失败",
-                )
+                result.onSuccess { completion ->
+                    val proposals = completion.proposedActions.mapNotNull(::toProposal)
+                    messages.value = messages.value + AiChatMessage(
+                        id = UUID.randomUUID().toString(),
+                        role = AiMessageRole.ASSISTANT,
+                        text = completion.answer,
+                        proposedActions = proposals,
+                    )
+                }.onFailure {
+                    messages.value = messages.value + AiChatMessage(
+                        id = UUID.randomUUID().toString(),
+                        role = AiMessageRole.SYSTEM,
+                        text = it.message ?: "AI 请求失败",
+                    )
+                }
+            } finally {
+                sending.value = false
             }
         }
     }
@@ -320,7 +325,7 @@ class AiAssistantViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
-    private suspend fun buildUserPrompt(question: String): String {
+    private suspend fun buildUserPrompt(question: String): String = withContext(Dispatchers.Default) {
         val people = repository.people.first()
         val relationTypes = repository.relationTypes.first()
         val relationships = repository.relationships.first()
@@ -374,7 +379,7 @@ class AiAssistantViewModel(application: Application) : AndroidViewModel(applicat
                 )
             },
         )
-        return "当前关系数据：\n${gson.toJson(context)}\n\n用户问题：\n$question"
+        "当前关系数据：\n${gson.toJson(context)}\n\n用户问题：\n$question"
     }
 
     private fun systemPrompt(): String = """

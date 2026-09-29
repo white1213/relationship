@@ -41,6 +41,7 @@ import com.relationship.graph.data.local.PersonEntity
 import com.relationship.graph.data.local.RelationTypeEntity
 import com.relationship.graph.data.local.RelationshipEntity
 import com.relationship.graph.data.inference.InferredRelationshipCandidate
+import com.relationship.graph.data.inference.RelativeAgeResolver
 import com.relationship.graph.ui.relationshipLabelForPerson
 import com.relationship.graph.data.preferences.GraphDisplayMode
 import kotlin.math.max
@@ -106,7 +107,7 @@ fun GraphCanvas(
     }
     val relationshipById = remember(relationships) { relationships.associateBy { it.id } }
     val selectedAnchorId = selectedPersonId ?: myPersonId
-    val siblingCountByPerson = remember(relationships, relationTypes) {
+    val siblingCountByPerson = remember(people, relationships, relationTypes) {
         val typeById = relationTypes.associateBy { it.id }
         val parentEdges = relationships.mapNotNull {
             RelationshipSemantics.parentChildEdge(it, typeById[it.relationTypeId])
@@ -115,23 +116,44 @@ fun GraphCanvas(
             RelationshipSemantics.kind(typeById[it.relationTypeId]) ==
                 com.relationship.graph.data.FamilyRelationKind.SIBLING
         }
-        val peopleByParent = parentEdges.groupBy { it.parentPersonId }
-        people.associate { person ->
-            val siblingIds = mutableSetOf<String>()
-            peopleByParent.values.forEach { edges ->
-                if (edges.any { it.childPersonId == person.id }) {
-                    siblingIds += edges.map { it.childPersonId }
-                }
+        val siblingIdsByPerson = mutableMapOf<String, MutableSet<String>>()
+        parentEdges.groupBy { it.parentPersonId }.values.forEach { edges ->
+            val childIds = edges.map { it.childPersonId }
+            childIds.forEach { childId ->
+                siblingIdsByPerson.getOrPut(childId) { mutableSetOf() } += childIds
             }
-            explicitSiblings.forEach { relationship ->
-                when (person.id) {
-                    relationship.fromPersonId -> siblingIds += relationship.toPersonId
-                    relationship.toPersonId -> siblingIds += relationship.fromPersonId
-                }
-            }
-            siblingIds.remove(person.id)
-            person.id to siblingIds.size
         }
+        explicitSiblings.forEach { relationship ->
+            siblingIdsByPerson.getOrPut(relationship.fromPersonId) { mutableSetOf() } +=
+                relationship.toPersonId
+            siblingIdsByPerson.getOrPut(relationship.toPersonId) { mutableSetOf() } +=
+                relationship.fromPersonId
+        }
+        people.associate { person ->
+            val siblingIds = siblingIdsByPerson[person.id].orEmpty()
+            person.id to (siblingIds.size - if (person.id in siblingIds) 1 else 0)
+        }
+    }
+    val peopleById = remember(people) { people.associateBy { it.id } }
+    val ageResolver = remember(peopleById, ageOrders) {
+        RelativeAgeResolver(peopleById = peopleById, ageOrders = ageOrders)
+    }
+    val relationshipCountByPerson = remember(relationships) {
+        val counts = mutableMapOf<String, Int>()
+        relationships.forEach { relationship ->
+            counts.merge(relationship.fromPersonId, 1, Int::plus)
+            counts.merge(relationship.toPersonId, 1, Int::plus)
+        }
+        counts
+    }
+    val personIdKeys = remember(people) { people.map { it.id } }
+    val edgeGroupKeys = remember(edgeGroups) { edgeGroups.map { it.key } }
+    val prioritisedPeople = remember(people, selectedPersonId, myPersonId) {
+        people.sortedWith(
+            compareByDescending<PersonEntity> {
+                it.id == selectedPersonId || it.id == myPersonId
+            }.thenBy { it.name },
+        )
     }
     val layout = remember(
         people,
@@ -234,12 +256,17 @@ fun GraphCanvas(
             }
         }
     }
+    val sortedLabelRoutes = remember(visibleRoutes, selectedRelationshipIds) {
+        visibleRoutes.sortedByDescending { route ->
+            route.relationshipIds.any { it in selectedRelationshipIds }
+        }
+    }
     val viewportsByMode = remember { mutableStateMapOf<GraphMode, Viewport>() }
     var viewport by remember { mutableStateOf(Viewport()) }
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
     var draggedNodeId by remember { mutableStateOf<String?>(null) }
     var pendingFitRequestKey by remember { mutableStateOf<String?>(null) }
-    val textMeasurer = rememberTextMeasurer()
+    val textMeasurer = rememberTextMeasurer(cacheSize = 256)
 
     LaunchedEffect(layout, mode, canvasSize) {
         nodePositions.clear()
@@ -285,7 +312,7 @@ fun GraphCanvas(
         modifier = modifier
             .fillMaxSize()
             .onSizeChanged { canvasSize = it }
-            .pointerInput(people.map { it.id }, edgeGroups.map { it.key }, mode) {
+            .pointerInput(personIdKeys, edgeGroupKeys, mode) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     val startTime = down.uptimeMillis
@@ -642,20 +669,13 @@ fun GraphCanvas(
             }
         }
 
-        val screenPositions = nodePositions.mapValues { (_, point) ->
-            center + viewport.pan + point * viewport.zoom
-        }
-        val prioritisedPeople = people.sortedWith(
-            compareByDescending<PersonEntity> {
-                it.id == selectedPersonId || it.id == myPersonId
-            }.thenBy { it.name },
-        )
         prioritisedPeople.forEach { person ->
             val isMyPerson = person.id == myPersonId
             val isSelected = person.id == selectedPersonId
             val showName = isMyPerson || isSelected || viewport.zoom >= NAME_REVEAL_ZOOM
             if (!showName) return@forEach
-            val position = screenPositions[person.id] ?: return@forEach
+            val nodePosition = nodePositions[person.id] ?: return@forEach
+            val position = center + viewport.pan + nodePosition * viewport.zoom
             val measuredName = textMeasurer.measure(
                 AnnotatedString(person.name),
                 style = TextStyle(
@@ -687,9 +707,7 @@ fun GraphCanvas(
             occupiedLabels += rect
 
             if (isSelected || viewport.zoom >= DETAIL_REVEAL_ZOOM) {
-                val relationshipCount = relationships.count {
-                    it.fromPersonId == person.id || it.toPersonId == person.id
-                }
+                val relationshipCount = relationshipCountByPerson[person.id] ?: 0
                 val measuredCount = textMeasurer.measure(
                     AnnotatedString("$relationshipCount 条关系"),
                     style = TextStyle(
@@ -714,10 +732,7 @@ fun GraphCanvas(
             }
         }
 
-        visibleRoutes
-            .sortedByDescending { route ->
-                route.relationshipIds.any { it in selectedRelationshipIds }
-            }
+        sortedLabelRoutes
             .forEach { route ->
                 val isHighlighted = highlightedEdgeKeys == null ||
                     route.relationshipIds.any { relationshipToGroup[it]?.key in highlightedEdgeKeys }
@@ -734,9 +749,8 @@ fun GraphCanvas(
                             val type = group.relationTypes.firstOrNull {
                                 it.id == relationship.relationTypeId
                             } ?: return@map emptyList()
-                            val byId = people.associateBy { it.id }
-                            val from = byId[relationship.fromPersonId]
-                            val to = byId[relationship.toPersonId]
+                            val from = peopleById[relationship.fromPersonId]
+                            val to = peopleById[relationship.toPersonId]
                             listOfNotNull(
                                 from?.let {
                                     relationshipLabelForPerson(
@@ -746,6 +760,7 @@ fun GraphCanvas(
                                         otherPerson = to,
                                         people = people,
                                         ageOrders = ageOrders,
+                                        resolver = ageResolver,
                                     )
                                 },
                                 to?.let {
@@ -756,6 +771,7 @@ fun GraphCanvas(
                                         otherPerson = from,
                                         people = people,
                                         ageOrders = ageOrders,
+                                        resolver = ageResolver,
                                     )
                                 },
                             ).distinct()

@@ -25,7 +25,7 @@ enum class InferenceConfirmationMode {
     AS_STEP_CHILD,
 }
 
-internal enum class RelativeAge {
+enum class RelativeAge {
     OLDER,
     YOUNGER,
     UNKNOWN,
@@ -1149,7 +1149,7 @@ object InferenceEngine {
 
 }
 
-internal class RelativeAgeResolver(
+class RelativeAgeResolver(
     private val peopleById: Map<String, PersonEntity>,
     ageOrders: List<RelativeAgeOrderEntity>,
 ) {
@@ -1177,10 +1177,11 @@ internal class RelativeAgeResolver(
             }
         }
     }
+    private val birthdayCache = mutableMapOf<String, LocalDate?>()
 
     fun compare(first: PersonEntity, second: PersonEntity): RelativeAge {
-        val firstBirthday = parseBirthday(first.birthday)
-        val secondBirthday = parseBirthday(second.birthday)
+        val firstBirthday = birthday(first)
+        val secondBirthday = birthday(second)
         if (firstBirthday != null && secondBirthday != null) {
             return when {
                 firstBirthday.isBefore(secondBirthday) -> RelativeAge.OLDER
@@ -1213,6 +1214,9 @@ internal class RelativeAgeResolver(
         }
         return RelativeAge.UNKNOWN
     }
+
+    private fun birthday(person: PersonEntity): LocalDate? =
+        birthdayCache.getOrPut(person.id) { parseBirthday(person.birthday) }
 
     private fun parseBirthday(value: String): LocalDate? =
         runCatching { LocalDate.parse(value.trim()) }.getOrNull()

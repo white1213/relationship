@@ -17,9 +17,10 @@ fun relationshipLabelForPerson(
     otherPerson: PersonEntity? = null,
     people: List<PersonEntity> = emptyList(),
     ageOrders: List<RelativeAgeOrderEntity> = emptyList(),
+    resolver: RelativeAgeResolver? = null,
 ): String {
     if (otherPerson != null) {
-        val resolver = RelativeAgeResolver(
+        val ageResolver = resolver ?: RelativeAgeResolver(
             peopleById = (people + otherPerson).associateBy { it.id },
             ageOrders = ageOrders,
         )
@@ -41,7 +42,7 @@ fun relationshipLabelForPerson(
                     relative = people.firstOrNull { it.id == personId },
                     type = type,
                     relationship = relationship,
-                    resolver = resolver,
+                    resolver = ageResolver,
                 )
             }
             FamilyRelationKind.AUNT_UNCLE,
@@ -76,7 +77,7 @@ fun relationshipLabelForPerson(
                         target = otherPerson,
                         relative = relative,
                         type = type,
-                        resolver = resolver,
+                        resolver = ageResolver,
                     )
                 }
             }

@@ -55,13 +55,13 @@ data class AppUiState(
     val searchQuery: String = "",
     val selectedCategory: RelationCategory? = null,
 ) {
-    val tagsByPerson: Map<String, List<TagEntity>>
-        get() {
-            val tagById = tags.associateBy { it.id }
-            return personTags
-                .groupBy { it.personId }
-                .mapValues { (_, refs) -> refs.mapNotNull { tagById[it.tagId] }.sortedBy { it.name } }
-        }
+    // 访问频繁（搜索、图谱、编辑器都会用），只在首次访问时分组一次。
+    val tagsByPerson: Map<String, List<TagEntity>> by lazy {
+        val tagById = tags.associateBy { it.id }
+        personTags
+            .groupBy { it.personId }
+            .mapValues { (_, refs) -> refs.mapNotNull { tagById[it.tagId] }.sortedBy { it.name } }
+    }
 
     fun person(personId: String?): PersonEntity? = people.firstOrNull { it.id == personId }
 

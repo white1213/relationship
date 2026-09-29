@@ -91,7 +91,8 @@ fun PersonEditorScreen(
     ) { bitmap ->
         bitmap ?: return@rememberLauncherForActivityResult
         scope.launch {
-            avatarPath = viewModel.importAvatarBitmap(id, bitmap)
+            runCatching { viewModel.importAvatarBitmap(id, bitmap) }
+                .onSuccess { avatarPath = it }
         }
     }
     val cameraPermissionLauncher = rememberLauncherForActivityResult(

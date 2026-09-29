@@ -28,9 +28,21 @@ object GraphFocusEngine {
         val parentChildEdges = relationships.mapNotNull {
             RelationshipSemantics.parentChildEdge(it, typeById[it.relationTypeId])
         }
-        val spouseRelationships = relationships.filter {
-            RelationshipSemantics.kind(typeById[it.relationTypeId]) == FamilyRelationKind.SPOUSE
+        val parentsByChild = parentChildEdges.groupBy(
+            keySelector = { it.childPersonId },
+            valueTransform = { it.parentPersonId },
+        )
+        val childrenByParent = parentChildEdges.groupBy(
+            keySelector = { it.parentPersonId },
+            valueTransform = { it.childPersonId },
+        )
+        val spousesByPerson = buildMap<String, MutableSet<String>> {
+            spouseRelationshipsOf(relationships, typeById).forEach { relationship ->
+                getOrPut(relationship.fromPersonId) { mutableSetOf() } += relationship.toPersonId
+                getOrPut(relationship.toPersonId) { mutableSetOf() } += relationship.fromPersonId
+            }
         }
+        fun spousesOf(personId: String): Set<String> = spousesByPerson[personId].orEmpty()
 
         return when (scope) {
             GraphFocusScope.RELATED -> {
@@ -54,13 +66,10 @@ object GraphFocusEngine {
                 queue.add(anchorPersonId)
                 while (queue.isNotEmpty()) {
                     val current = queue.removeFirst()
-                    parentChildEdges
-                        .filter { it.childPersonId == current }
-                        .forEach { edge ->
-                            val parentId = edge.parentPersonId
-                            if (personIds.add(parentId)) queue.add(parentId)
-                            spousesOf(parentId, spouseRelationships).forEach(personIds::add)
-                        }
+                    parentsByChild[current].orEmpty().forEach { parentId ->
+                        if (personIds.add(parentId)) queue.add(parentId)
+                        personIds += spousesOf(parentId)
+                    }
                 }
                 GraphFocusResult(
                     personIds = personIds,
@@ -74,21 +83,16 @@ object GraphFocusEngine {
             GraphFocusScope.BRANCH,
             -> {
                 val personIds = mutableSetOf(anchorPersonId)
-                personIds += spousesOf(anchorPersonId, spouseRelationships)
+                personIds += spousesOf(anchorPersonId)
                 val queue = ArrayDeque<String>()
                 queue.add(anchorPersonId)
                 while (queue.isNotEmpty()) {
                     val current = queue.removeFirst()
-                    parentChildEdges
-                        .filter { it.parentPersonId == current }
-                        .forEach { edge ->
-                            val childId = edge.childPersonId
-                            if (personIds.add(childId)) queue.add(childId)
-                            personIds += spousesOf(childId, spouseRelationships)
-                            personIds += parentChildEdges
-                                .filter { it.childPersonId == childId }
-                                .map { it.parentPersonId }
-                        }
+                    childrenByParent[current].orEmpty().forEach { childId ->
+                        if (personIds.add(childId)) queue.add(childId)
+                        personIds += spousesOf(childId)
+                        personIds += parentsByChild[childId].orEmpty()
+                    }
                 }
                 GraphFocusResult(
                     personIds = personIds,
@@ -101,15 +105,11 @@ object GraphFocusEngine {
         }
     }
 
-    private fun spousesOf(
-        personId: String,
-        spouseRelationships: List<RelationshipEntity>,
-    ): Set<String> = spouseRelationships.mapNotNull { relationship ->
-        when (personId) {
-            relationship.fromPersonId -> relationship.toPersonId
-            relationship.toPersonId -> relationship.fromPersonId
-            else -> null
-        }
-    }.toSet()
+    private fun spouseRelationshipsOf(
+        relationships: List<RelationshipEntity>,
+        typeById: Map<String, RelationTypeEntity>,
+    ): List<RelationshipEntity> = relationships.filter {
+        RelationshipSemantics.kind(typeById[it.relationTypeId]) == FamilyRelationKind.SPOUSE
+    }
 
 }

@@ -6,7 +6,6 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
-import androidx.room.Update
 import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
@@ -60,9 +59,6 @@ interface RelationshipDao {
     @Query("SELECT * FROM relative_age_orders")
     suspend fun getAllRelativeAgeOrders(): List<RelativeAgeOrderEntity>
 
-    @Query("SELECT COUNT(*) FROM relation_types")
-    suspend fun relationTypeCount(): Int
-
     @Query("SELECT COUNT(*) FROM relationships WHERE fromPersonId = :personId OR toPersonId = :personId")
     suspend fun relationshipCountForPerson(personId: String): Int
 
@@ -84,12 +80,6 @@ interface RelationshipDao {
 
     @Upsert
     suspend fun upsertPeople(people: List<PersonEntity>)
-
-    @Update
-    suspend fun updatePerson(person: PersonEntity)
-
-    @Upsert
-    suspend fun upsertTag(tag: TagEntity)
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertTags(tags: List<TagEntity>)
