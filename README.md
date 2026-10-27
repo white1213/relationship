@@ -113,3 +113,8 @@ keyPassword=android
 - `storeFile` 支持仓库相对路径（相对项目根目录）或绝对路径。
 - 未创建 `keystore.properties` 时：debug 构建使用 Android 默认调试签名；release 构建产物为未签名 APK。
 - 正式发布请使用固定的一把钥匙并妥善备份 keystore 文件和 `keystore.properties`；更换签名后已安装用户将无法覆盖安装。
+
+## 许可与更新日志
+
+- 更新日志：[CHANGELOG.md](CHANGELOG.md)
+- 本项目以 [MIT 许可](LICENSE) 开源。
