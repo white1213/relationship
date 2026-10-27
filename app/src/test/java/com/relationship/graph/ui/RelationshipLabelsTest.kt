@@ -254,4 +254,104 @@ class RelationshipLabelsTest {
             ),
         )
     }
+
+    @Test
+    fun cousinTypeRefinesToSpecificTitleWhenAgeKnown() {
+        val cousinType = RelationTypeEntity(
+            id = "preset_biao_cousin",
+            name = "表兄弟姐妹",
+            category = RelationCategory.FAMILY,
+            direction = RelationDirection.BIDIRECTIONAL,
+            isBuiltIn = true,
+        )
+        val olderCousin = PersonEntity(
+            id = "cousin",
+            name = "表姐",
+            gender = Gender.FEMALE,
+            birthday = "1995-06-01",
+        )
+        val anchor = PersonEntity(
+            id = "anchor",
+            name = "我",
+            gender = Gender.MALE,
+            birthday = "2000-06-01",
+        )
+        val relationship = RelationshipEntity(
+            id = "cousin-relationship",
+            fromPersonId = olderCousin.id,
+            toPersonId = anchor.id,
+            relationTypeId = cousinType.id,
+        )
+
+        assertEquals(
+            "表姐",
+            relationshipLabelForPerson(
+                relationship,
+                cousinType,
+                anchor.id,
+                otherPerson = olderCousin,
+                people = listOf(olderCousin, anchor),
+            ),
+        )
+    }
+
+    @Test
+    fun cousinTypeFallsBackToDualTitleInsteadOfDegenerateWord() {
+        val cousinType = RelationTypeEntity(
+            id = "preset_biao_cousin",
+            name = "表兄弟姐妹",
+            category = RelationCategory.FAMILY,
+            direction = RelationDirection.BIDIRECTIONAL,
+            isBuiltIn = true,
+        )
+        val cousin = PersonEntity(id = "cousin", name = "表哥", gender = Gender.MALE)
+        val anchor = PersonEntity(id = "anchor", name = "我", gender = Gender.MALE)
+        val relationship = RelationshipEntity(
+            id = "cousin-relationship",
+            fromPersonId = cousin.id,
+            toPersonId = anchor.id,
+            relationTypeId = cousinType.id,
+        )
+
+        assertEquals(
+            "表哥/表弟",
+            relationshipLabelForPerson(
+                relationship,
+                cousinType,
+                anchor.id,
+                otherPerson = cousin,
+                people = listOf(cousin, anchor),
+            ),
+        )
+    }
+
+    @Test
+    fun cousinTypeWithUnknownGenderKeepsGroupName() {
+        val cousinType = RelationTypeEntity(
+            id = "preset_biao_cousin",
+            name = "表兄弟姐妹",
+            category = RelationCategory.FAMILY,
+            direction = RelationDirection.BIDIRECTIONAL,
+            isBuiltIn = true,
+        )
+        val cousin = PersonEntity(id = "cousin", name = "表亲")
+        val anchor = PersonEntity(id = "anchor", name = "我", gender = Gender.MALE)
+        val relationship = RelationshipEntity(
+            id = "cousin-relationship",
+            fromPersonId = cousin.id,
+            toPersonId = anchor.id,
+            relationTypeId = cousinType.id,
+        )
+
+        assertEquals(
+            "表兄弟姐妹",
+            relationshipLabelForPerson(
+                relationship,
+                cousinType,
+                anchor.id,
+                otherPerson = cousin,
+                people = listOf(cousin, anchor),
+            ),
+        )
+    }
 }

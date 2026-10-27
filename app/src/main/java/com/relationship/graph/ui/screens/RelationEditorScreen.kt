@@ -141,7 +141,7 @@ fun RelationEditorScreen(
         ) {
             Text("人物", style = MaterialTheme.typography.titleMedium)
             PersonPicker(
-                label = "人物一",
+                label = "谁",
                 selectedName = firstPerson?.name.orEmpty(),
                 people = state.people,
                 expanded = firstMenu,
@@ -154,7 +154,7 @@ fun RelationEditorScreen(
                 },
             )
             PersonPicker(
-                label = "人物二",
+                label = "和谁",
                 selectedName = secondPerson?.name.orEmpty(),
                 people = state.people,
                 expanded = secondMenu,
@@ -486,21 +486,84 @@ private fun PersonPicker(
             )
             Icon(Icons.Rounded.ArrowDropDown, contentDescription = null)
         }
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { onExpandedChange(false) },
-        ) {
-            people.forEach { person ->
-                DropdownMenuItem(
-                    text = { Text(person.name) },
-                    onClick = {
-                        onSelect(person.id)
-                        onExpandedChange(false)
-                    },
-                )
-            }
+        if (expanded) {
+            PersonSearchDialog(
+                title = label,
+                people = people,
+                onSelect = {
+                    onSelect(it)
+                    onExpandedChange(false)
+                },
+                onDismiss = { onExpandedChange(false) },
+            )
         }
     }
+}
+
+@Composable
+private fun PersonSearchDialog(
+    title: String,
+    people: List<com.relationship.graph.data.local.PersonEntity>,
+    onSelect: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var query by rememberSaveable { mutableStateOf("") }
+    val filteredPeople = people.filter {
+        it.name.contains(query.trim(), ignoreCase = true) ||
+            it.phone.contains(query.trim(), ignoreCase = true)
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    label = { Text("搜索姓名或电话") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 400.dp),
+                ) {
+                    items(filteredPeople, key = { it.id }) { person ->
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onSelect(person.id) }
+                                .padding(vertical = 10.dp),
+                        ) {
+                            Text(person.name, style = MaterialTheme.typography.bodyLarge)
+                            if (person.phone.isNotBlank()) {
+                                Text(
+                                    text = person.phone,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                    if (filteredPeople.isEmpty()) {
+                        item {
+                            Text(
+                                text = "没有匹配的人物",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(vertical = 12.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
+    )
 }
 
 @Composable

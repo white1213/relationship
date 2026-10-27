@@ -44,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.relationship.graph.data.local.PersonEntity
 import com.relationship.graph.data.local.AgeComparison
+import com.relationship.graph.data.local.Gender
 import com.relationship.graph.data.local.RelationshipEntity
 import com.relationship.graph.data.inference.InferenceConfidence
 import com.relationship.graph.data.inference.InferenceConfirmationMode
@@ -61,6 +62,7 @@ import com.relationship.graph.ui.relationshipLabelForPerson
 fun PersonDetailScreen(
     state: AppUiState,
     personId: String,
+    viewModel: com.relationship.graph.ui.RelationshipViewModel,
     onBack: () -> Unit,
     onEdit: () -> Unit,
     onAddRelationship: () -> Unit,
@@ -75,6 +77,7 @@ fun PersonDetailScreen(
     onDeletePerson: (PersonEntity) -> Unit,
     onDeleteRelationship: (RelationshipEntity) -> Unit,
     onMergePersons: (absorbedId: String, survivorId: String) -> Unit = { _, _ -> },
+    onSetGender: (PersonEntity, Gender) -> Unit = { _, _ -> },
 ) {
     val person = state.person(personId)
     var showDeletePerson by remember { mutableStateOf(false) }
@@ -83,6 +86,7 @@ fun PersonDetailScreen(
     var mergeDialogVisible by remember { mutableStateOf(false) }
     var mergeTargetId by remember { mutableStateOf<String?>(null) }
     var mergeQuery by remember { mutableStateOf("") }
+    var quickAddKinshipVisible by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -148,6 +152,31 @@ fun PersonDetailScreen(
             person.address.takeIf(String::isNotBlank)?.let {
                 DetailText(label = "地址", value = it, modifier = Modifier.fillMaxWidth())
             }
+
+            if (person.gender == Gender.UNSPECIFIED) {
+                CompletionHintCard(
+                    text = "「${person.name}」还没有性别，补全后才能显示「表哥」「婶婶」这类具体称谓。",
+                    actions = {
+                        OutlinedButton(onClick = { onSetGender(person, Gender.MALE) }) {
+                            Text("男")
+                        }
+                        OutlinedButton(onClick = { onSetGender(person, Gender.FEMALE) }) {
+                            Text("女")
+                        }
+                    },
+                )
+            }
+            if (person.birthday.isBlank() && person.isDeceased != true) {
+                CompletionHintCard(
+                    text = "没有生日信息，无法区分「表哥/表弟」等长幼称谓，也不会有生日提醒。",
+                    actions = {
+                        OutlinedButton(onClick = onEdit) {
+                            Text("去补全")
+                        }
+                    },
+                )
+            }
+
             state.tagsByPerson[person.id].orEmpty().takeIf(List<*>::isNotEmpty)?.let { tags ->
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("标签", style = MaterialTheme.typography.labelLarge)
@@ -342,10 +371,17 @@ fun PersonDetailScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Text("人际关系", style = MaterialTheme.typography.titleLarge)
-                OutlinedButton(onClick = onAddRelationship) {
-                    Icon(Icons.Rounded.Add, contentDescription = null)
-                    Spacer(Modifier.padding(horizontal = 3.dp))
-                    Text("添加")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { quickAddKinshipVisible = true }) {
+                        Icon(Icons.Rounded.Add, contentDescription = null)
+                        Spacer(Modifier.padding(horizontal = 3.dp))
+                        Text("添加亲人")
+                    }
+                    OutlinedButton(onClick = onAddRelationship) {
+                        Icon(Icons.Rounded.Add, contentDescription = null)
+                        Spacer(Modifier.padding(horizontal = 3.dp))
+                        Text("添加")
+                    }
                 }
             }
 
@@ -558,6 +594,15 @@ fun PersonDetailScreen(
         )
     }
 
+    if (quickAddKinshipVisible && person != null) {
+        QuickAddKinshipDialog(
+            person = person,
+            state = state,
+            viewModel = viewModel,
+            onDismiss = { quickAddKinshipVisible = false },
+        )
+    }
+
     relationshipToDelete?.let { relationship ->
         AlertDialog(
             onDismissRequest = { relationshipToDelete = null },
@@ -743,5 +788,33 @@ private fun DetailText(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(text = value, style = MaterialTheme.typography.bodyLarge)
+    }
+}
+
+@Composable
+private fun CompletionHintCard(
+    text: String,
+    actions: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                actions()
+            }
+        }
     }
 }

@@ -429,6 +429,108 @@ class InferenceEngineTest {
     }
 
     @Test
+    fun cousinWithoutBirthdayUsesDualAgeTitleInsteadOfDegenerateWord() {
+        val people = listOf(
+            person("grandparent", "祖辈"),
+            person("parent", "父亲", Gender.MALE),
+            person("aunt", "姑姑", Gender.FEMALE),
+            person("child", "孩子", Gender.MALE),
+            person("cousin", "表亲", Gender.MALE),
+        )
+        val relationships = listOf(
+            relationship("gp-parent", "grandparent", "parent", parentChild),
+            relationship("gp-aunt", "grandparent", "aunt", parentChild),
+            relationship("parent-child", "parent", "child", parentChild),
+            relationship("aunt-cousin", "aunt", "cousin", parentChild),
+        )
+
+        val candidate = infer(people, relationships).single {
+            it.rule == InferenceRule.COUSIN &&
+                setOf(it.fromPersonId, it.toPersonId) == setOf("child", "cousin")
+        }
+
+        assertEquals("表哥/表弟", candidate.labelFor("child"))
+        assertEquals("表哥/表弟", candidate.labelFor("cousin"))
+    }
+
+    @Test
+    fun paternalAuntChildIsBiaoEvenWhenParentGenderMissing() {
+        val people = listOf(
+            person("grandparent", "祖辈"),
+            person("parent", "父亲"),
+            person("aunt", "姑姑", Gender.FEMALE),
+            person("child", "孩子", Gender.MALE, "2000-01-01"),
+            person("cousin", "表姐", Gender.FEMALE, "1998-01-01"),
+        )
+        val relationships = listOf(
+            relationship("gp-parent", "grandparent", "parent", parentChild),
+            relationship("gp-aunt", "grandparent", "aunt", parentChild),
+            relationship("parent-child", "parent", "child", parentChild),
+            relationship("aunt-cousin", "aunt", "cousin", parentChild),
+        )
+
+        val candidate = infer(people, relationships).single {
+            it.rule == InferenceRule.COUSIN &&
+                setOf(it.fromPersonId, it.toPersonId) == setOf("child", "cousin")
+        }
+
+        assertEquals("表弟", candidate.labelFor("child"))
+        assertEquals("表姐", candidate.labelFor("cousin"))
+    }
+
+    @Test
+    fun paternalUncleChildIsTangWhenOtherParentResolvesParentGender() {
+        val people = listOf(
+            person("grandparent", "祖辈"),
+            person("parent", "父亲"),
+            person("uncle", "伯父", Gender.MALE),
+            person("mother", "母亲", Gender.FEMALE),
+            person("child", "孩子", Gender.MALE, "2000-01-01"),
+            person("cousin", "堂哥", Gender.MALE, "1998-01-01"),
+        )
+        val relationships = listOf(
+            relationship("gp-parent", "grandparent", "parent", parentChild),
+            relationship("gp-uncle", "grandparent", "uncle", parentChild),
+            relationship("parent-child", "parent", "child", parentChild),
+            relationship("parent-mother", "parent", "mother", spouse),
+            relationship("uncle-cousin", "uncle", "cousin", parentChild),
+        )
+
+        val candidate = infer(people, relationships).single {
+            it.rule == InferenceRule.COUSIN &&
+                setOf(it.fromPersonId, it.toPersonId) == setOf("child", "cousin")
+        }
+
+        assertEquals("堂弟", candidate.labelFor("child"))
+    }
+
+    @Test
+    fun cousinWithUnknownGenderUsesGroupTitle() {
+        val people = listOf(
+            person("grandparent", "祖辈"),
+            person("parent", "父亲", Gender.MALE),
+            person("aunt", "姑姑", Gender.FEMALE),
+            person("child", "孩子", Gender.MALE),
+            person("cousin", "表亲"),
+        )
+        val relationships = listOf(
+            relationship("gp-parent", "grandparent", "parent", parentChild),
+            relationship("gp-aunt", "grandparent", "aunt", parentChild),
+            relationship("parent-child", "parent", "child", parentChild),
+            relationship("aunt-cousin", "aunt", "cousin", parentChild),
+        )
+
+        val candidate = infer(people, relationships).single {
+            it.rule == InferenceRule.COUSIN &&
+                setOf(it.fromPersonId, it.toPersonId) == setOf("child", "cousin")
+        }
+
+        // labelFor 返回对应人物视角的标签：孩子侧用孩子性别，表亲侧用表亲性别。
+        assertEquals("表哥/表弟", candidate.labelFor("child"))
+        assertEquals("表兄弟姐妹", candidate.labelFor("cousin"))
+    }
+
+    @Test
     fun equalDistanceCousinPathsKeepAllDistinctLabels() {
         val people = listOf(
             person("grandparent", "祖辈"),

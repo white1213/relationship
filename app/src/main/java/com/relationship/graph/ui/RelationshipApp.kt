@@ -318,6 +318,7 @@ private fun MainNavigation(
                 PersonDetailScreen(
                     state = uiState,
                     personId = personId,
+                    viewModel = viewModel,
                     onBack = navController::popBackStack,
                     onEdit = { navController.navigate(Routes.personEditor(personId)) },
                     onAddRelationship = {
@@ -333,6 +334,7 @@ private fun MainNavigation(
                     onDeletePerson = viewModel::deletePerson,
                     onDeleteRelationship = viewModel::deleteRelationship,
                     onMergePersons = viewModel::mergePersons,
+                    onSetGender = viewModel::updatePersonGender,
                 )
             }
             composable(

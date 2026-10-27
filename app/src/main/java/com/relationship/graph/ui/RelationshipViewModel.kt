@@ -25,6 +25,7 @@ import com.relationship.graph.data.local.RelativeAgeOrderEntity
 import com.relationship.graph.data.local.TagEntity
 import com.relationship.graph.data.local.BirthdayCalendar
 import com.relationship.graph.data.calendar.LunarDates
+import com.relationship.graph.data.kinship.KinshipTermSpec
 import com.relationship.graph.reminder.BirthdayReminderScheduler
 import com.relationship.graph.data.inference.InferenceEngine
 import com.relationship.graph.data.inference.InferenceConfirmationMode
@@ -297,6 +298,106 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
                 }
                 .onFailure { sendMessage(it.message ?: "删除失败") }
         }
+    }
+
+    // 详情页补全引导用：只改性别，其余字段（含标签、农历信息）原样保留。
+    fun updatePersonGender(person: PersonEntity, gender: Gender) {
+        viewModelScope.launch {
+            runCatching {
+                repository.savePerson(
+                    person = person.copy(gender = gender),
+                    tagNames = uiState.value.tagsByPerson[person.id].orEmpty().map { it.name },
+                )
+            }
+                .onSuccess { sendMessage("性别已更新，称谓会更具体") }
+                .onFailure { sendMessage(it.message ?: "更新失败") }
+        }
+    }
+
+    /**
+     * 一句话录入 / 详情页快建共用的提交入口：缺的人物按姓名补建，
+     * 自定义关系类型按需创建，保存前做辈分校验。返回 null 表示成功。
+     */
+    suspend fun commitKinshipEntry(
+        subjectName: String,
+        relativeName: String,
+        spec: KinshipTermSpec,
+        subjectPersonId: String?,
+        relativePersonId: String?,
+        subjectGender: Gender = Gender.UNSPECIFIED,
+        relativeGender: Gender = Gender.UNSPECIFIED,
+    ): String? {
+        val people = repository.people.first()
+        val subject = subjectPersonId?.let { id -> people.firstOrNull { it.id == id } }
+            ?: people.firstOrNull { it.name == subjectName.trim() }
+            ?: createPersonNow(subjectName, subjectGender)
+            ?: return "创建人物「${subjectName.trim()}」失败"
+        val relative = relativePersonId?.let { id -> people.firstOrNull { it.id == id } }
+            ?: people.firstOrNull { it.name == relativeName.trim() }
+            ?: createPersonNow(relativeName, relativeGender)
+            ?: return "创建人物「${relativeName.trim()}」失败"
+        if (subject.id == relative.id) return "两个人不能是同一位"
+
+        val typeId = spec.presetTypeId ?: resolveKinshipCustomTypeId(spec)
+            ?: return "创建关系类型「${spec.customName}」失败"
+        val (fromPersonId, toPersonId) = if (spec.subjectIsFrom) {
+            subject.id to relative.id
+        } else {
+            relative.id to subject.id
+        }
+        val validation = validateRelationship(
+            fromPersonId = fromPersonId,
+            toPersonId = toPersonId,
+            relationTypeId = typeId,
+            existing = null,
+        )
+        validation.conflicts.firstOrNull()?.let { return it.message }
+
+        val now = System.currentTimeMillis()
+        val relationship = RelationshipEntity(
+            id = UUID.randomUUID().toString(),
+            fromPersonId = fromPersonId,
+            toPersonId = toPersonId,
+            relationTypeId = typeId,
+            labelOverride = spec.labelOverride,
+            inverseLabelOverride = spec.inverseLabelOverride,
+            createdAt = now,
+            updatedAt = now,
+        )
+        repository.saveRelationship(relationship)
+        pushUndo(label = "新增关系") { repository.deleteRelationship(relationship) }
+        sendMessage("已添加关系：${subject.name} 与 ${relative.name}")
+        return null
+    }
+
+    private suspend fun createPersonNow(name: String, gender: Gender): PersonEntity? {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return null
+        val now = System.currentTimeMillis()
+        val person = PersonEntity(
+            id = UUID.randomUUID().toString(),
+            name = trimmed,
+            gender = gender,
+            createdAt = now,
+            updatedAt = now,
+        )
+        return runCatching {
+            repository.savePerson(person = person, tagNames = emptyList())
+            person
+        }.getOrNull()
+    }
+
+    private suspend fun resolveKinshipCustomTypeId(spec: KinshipTermSpec): String? {
+        val name = spec.customName ?: return null
+        repository.relationTypes.first()
+            .firstOrNull { it.name.trim() == name }
+            ?.let { return it.id }
+        return createCustomRelationType(
+            name = name,
+            inverseName = spec.customInverse,
+            category = RelationCategory.FAMILY,
+            direction = spec.customDirection,
+        )
     }
 
     fun saveRelationship(

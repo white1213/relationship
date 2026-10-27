@@ -172,6 +172,26 @@ object InferenceEngine {
         fun spouses(personId: String): List<PersonEntity> =
             spousesByPerson[personId].orEmpty().mapNotNull(peopleById::get)
 
+        // 反推性别缺失人物的线索：其配偶的已知性别。
+        fun genderHintFromSpouse(personId: String): Gender? =
+            spouses(personId)
+                .map { it.gender }
+                .filter { it != Gender.UNSPECIFIED }
+                .distinct()
+                .singleOrNull()
+
+        // 反推性别缺失家长的线索：孩子的另一位家长，或本家长的配偶。
+        fun otherParentGender(childId: String, parentId: String): Gender? {
+            parentsByChild[childId].orEmpty()
+                .filter { it.parentPersonId != parentId }
+                .mapNotNull { peopleById[it.parentPersonId]?.gender }
+                .filter { it != Gender.UNSPECIFIED }
+                .distinct()
+                .singleOrNull()
+                ?.let { return it }
+            return genderHintFromSpouse(parentId)
+        }
+
         fun marriageMode(firstPersonId: String, secondPersonId: String): MarriageKinshipMode =
             spouseRelationshipByPair[pairKey(firstPersonId, secondPersonId)]
                 ?.marriageKinshipMode
@@ -282,7 +302,10 @@ object InferenceEngine {
                             rule = InferenceRule.AUNT_UNCLE,
                             typeId = InferenceRelationTypeIds.AUNT_UNCLE,
                             fromLabel = auntUncleLabel(auntOrUncle, parent, side, ageResolver),
-                            toLabel = nieceNephewLabel(anchor, parent),
+                            toLabel = nieceNephewLabel(
+                                anchor,
+                                effectiveGender(parent, parentEdge?.parentRoleGender),
+                            ),
                             reason = "${parent.name}的兄弟姐妹",
                             evidence = siblingEvidence(
                                 parent.id,
@@ -310,7 +333,10 @@ object InferenceEngine {
                                         parentEdge = parentEdge,
                                         ageResolver = ageResolver,
                                     ),
-                                    toLabel = nieceNephewLabel(anchor, parent),
+                                    toLabel = nieceNephewLabel(
+                                anchor,
+                                effectiveGender(parent, parentEdge?.parentRoleGender),
+                            ),
                                     reason = "${parent.name}的兄弟姐妹的配偶",
                                     evidence = siblingEvidence(
                                         parent.id,
@@ -334,6 +360,8 @@ object InferenceEngine {
                                     parent = parent,
                                     parentEdge = parentEdge,
                                     auntOrUncle = auntOrUncle,
+                                    otherParentGender = otherParentGender(anchor.id, parent.id),
+                                    auntOrUncleSpouseGender = genderHintFromSpouse(auntOrUncle.id),
                                 )
                                 addSymmetric(
                                     first = anchor,
@@ -546,6 +574,12 @@ object InferenceEngine {
                                         parent = spouseParent,
                                         parentEdge = spouseParentEdge,
                                         auntOrUncle = spouseAuntOrUncle,
+                                        otherParentGender = otherParentGender(
+                                            spouse.id,
+                                            spouseParent.id,
+                                        ),
+                                        auntOrUncleSpouseGender =
+                                            genderHintFromSpouse(spouseAuntOrUncle.id),
                                     )
                                     addSymmetric(
                                         first = anchor,
@@ -847,14 +881,14 @@ object InferenceEngine {
         }
     }
 
-    private fun nieceNephewLabel(person: PersonEntity, parent: PersonEntity): String =
+    private fun nieceNephewLabel(person: PersonEntity, parentGender: Gender): String =
         when {
-            parent.gender == Gender.MALE -> when (person.gender) {
+            parentGender == Gender.MALE -> when (person.gender) {
                 Gender.MALE -> "侄子"
                 Gender.FEMALE -> "侄女"
                 Gender.UNSPECIFIED -> "侄辈"
             }
-            parent.gender == Gender.FEMALE -> when (person.gender) {
+            parentGender == Gender.FEMALE -> when (person.gender) {
                 Gender.MALE -> "外甥"
                 Gender.FEMALE -> "外甥女"
                 Gender.UNSPECIFIED -> "外甥辈"
@@ -885,20 +919,30 @@ object InferenceEngine {
         side: String,
         ageResolver: RelativeAgeResolver,
     ): String {
-        if (side == "堂表") return "堂表亲"
+        // 兜底遵循 RelationshipLabels 的风格：分不出的维度用「A/B」双称谓，
+        // 不再拼接「表表亲」「堂表亲」这类退化词。
+        val prefix = when (side) {
+            "堂" -> "堂"
+            "表" -> "表"
+            else -> "堂/表"
+        }
         val age = ageResolver.compare(person, relative)
         return when (person.gender) {
             Gender.MALE -> when (age) {
-                RelativeAge.OLDER -> "${side}哥"
-                RelativeAge.YOUNGER -> "${side}弟"
-                RelativeAge.UNKNOWN -> "${side}表亲"
+                RelativeAge.OLDER -> "${prefix}哥"
+                RelativeAge.YOUNGER -> "${prefix}弟"
+                RelativeAge.UNKNOWN -> "${prefix}哥/${prefix}弟"
             }
             Gender.FEMALE -> when (age) {
-                RelativeAge.OLDER -> "${side}姐"
-                RelativeAge.YOUNGER -> "${side}妹"
-                RelativeAge.UNKNOWN -> "${side}表亲"
+                RelativeAge.OLDER -> "${prefix}姐"
+                RelativeAge.YOUNGER -> "${prefix}妹"
+                RelativeAge.UNKNOWN -> "${prefix}姐/${prefix}妹"
             }
-            Gender.UNSPECIFIED -> if (side == "堂") "堂表亲" else "表亲"
+            Gender.UNSPECIFIED -> when (age) {
+                RelativeAge.OLDER -> "${prefix}哥/${prefix}姐"
+                RelativeAge.YOUNGER -> "${prefix}弟/${prefix}妹"
+                RelativeAge.UNKNOWN -> "${prefix}兄弟姐妹"
+            }
         }
     }
 
@@ -1117,16 +1161,23 @@ object InferenceEngine {
         parent: PersonEntity,
         parentEdge: ParentChildEdge?,
         auntOrUncle: PersonEntity,
+        otherParentGender: Gender? = null,
+        auntOrUncleSpouseGender: Gender? = null,
     ): String {
+        // 性别缺失时：女性同胞必为姑姑/姨妈（均为表亲）；男性同胞可用配偶或另一位
+        // 家长的性别反推（配偶是母亲则本人是父亲，叔伯为堂）。
         val parentGender = effectiveGender(parent, parentEdge?.parentRoleGender)
-        return if (parentGender == Gender.MALE && auntOrUncle.gender == Gender.MALE) {
-            "堂"
-        } else if (parentGender == Gender.MALE && auntOrUncle.gender == Gender.FEMALE) {
-            "表"
-        } else if (parentGender == Gender.FEMALE) {
-            "表"
-        } else {
-            "堂表"
+            .takeUnless { it == Gender.UNSPECIFIED }
+            ?: otherParentGender?.let { if (it == Gender.MALE) Gender.FEMALE else Gender.MALE }
+        val siblingGender = auntOrUncle.gender
+            .takeUnless { it == Gender.UNSPECIFIED }
+            ?: auntOrUncleSpouseGender?.let { if (it == Gender.MALE) Gender.FEMALE else Gender.MALE }
+        return when {
+            parentGender == Gender.MALE && siblingGender == Gender.MALE -> "堂"
+            parentGender == Gender.MALE && siblingGender == Gender.FEMALE -> "表"
+            parentGender == Gender.FEMALE -> "表"
+            siblingGender == Gender.FEMALE -> "表"
+            else -> "堂表"
         }
     }
 

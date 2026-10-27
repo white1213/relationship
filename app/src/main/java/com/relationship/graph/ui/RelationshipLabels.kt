@@ -167,18 +167,23 @@ private fun cousinTitle(
 ): String {
     val side = if (type.name.startsWith("堂")) "堂" else if (type.name.startsWith("表")) "表" else "堂表"
     if (side == "堂表") return type.name
+    // 兜底用「A/B」双称谓，避免退化为「表亲」「堂表亲」这类笼统词。
     return when (resolver.compare(target, relative)) {
         com.relationship.graph.data.inference.RelativeAge.OLDER -> when (target.gender) {
             Gender.MALE -> "${side}哥"
             Gender.FEMALE -> "${side}姐"
-            Gender.UNSPECIFIED -> if (side == "堂") "堂表亲" else "表亲"
+            Gender.UNSPECIFIED -> "${side}哥/${side}姐"
         }
         com.relationship.graph.data.inference.RelativeAge.YOUNGER -> when (target.gender) {
             Gender.MALE -> "${side}弟"
             Gender.FEMALE -> "${side}妹"
-            Gender.UNSPECIFIED -> if (side == "堂") "堂表亲" else "表亲"
+            Gender.UNSPECIFIED -> "${side}弟/${side}妹"
         }
-        com.relationship.graph.data.inference.RelativeAge.UNKNOWN -> type.name
+        com.relationship.graph.data.inference.RelativeAge.UNKNOWN -> when (target.gender) {
+            Gender.MALE -> "${side}哥/${side}弟"
+            Gender.FEMALE -> "${side}姐/${side}妹"
+            Gender.UNSPECIFIED -> type.name
+        }
     }
 }
 
