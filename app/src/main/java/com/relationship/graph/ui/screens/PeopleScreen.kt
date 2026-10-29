@@ -48,6 +48,7 @@ fun PeopleScreen(
     viewModel: RelationshipViewModel,
     onPersonClick: (String) -> Unit,
     onAddPerson: () -> Unit,
+    onEditRelationship: (String) -> Unit = {},
 ) {
     val query = state.searchQuery.trim().lowercase()
     var sentence by rememberSaveable { mutableStateOf("") }
@@ -203,6 +204,7 @@ fun PeopleScreen(
                 parsedResult = null
                 sentence = ""
             },
+            onEditRelationship = onEditRelationship,
         )
     }
 }

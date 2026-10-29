@@ -358,7 +358,13 @@ sealed interface KinshipParseResult {
     data class Failure(val message: String) : KinshipParseResult
 }
 
-/** 解析「A 是 B 的称谓」与「A 是 B 的妈妈的哥哥」这类句子，纯本地、离线可用。 */
+/**
+ * 解析「A 是 B 的称谓」与「A 是 B 的妈妈的哥哥」这类句子，纯本地、离线可用。
+ *
+ * 句式边界（均为「安全失败」：明确报错，不会错误绑定）：
+ * - 只支持「A 是 B 的…」结构，人名中不能含「是」或「的」；
+ * - 组合链中的每一步都必须在词表内；「爷爷的儿子」这类多解链条不支持。
+ */
 object KinshipSentenceParser {
 
     fun parse(raw: String): KinshipParseResult {

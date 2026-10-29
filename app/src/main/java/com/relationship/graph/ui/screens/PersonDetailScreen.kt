@@ -600,6 +600,7 @@ fun PersonDetailScreen(
             state = state,
             viewModel = viewModel,
             onDismiss = { quickAddKinshipVisible = false },
+            onEditRelationship = onEditRelationship,
         )
     }
 

@@ -273,6 +273,9 @@ private fun MainNavigation(
                     viewModel = viewModel,
                     onPersonClick = { navController.navigate(Routes.personDetail(it)) },
                     onAddPerson = { navController.navigate(Routes.personEditor()) },
+                    onEditRelationship = { id ->
+                        navController.navigate(Routes.relationEditor(relationshipId = id))
+                    },
                 )
             }
             composable(Routes.Kinship) {
@@ -373,6 +376,10 @@ private fun MainNavigation(
                     initialPersonId = entry.arguments?.getString("personId").orEmpty().ifBlank { null },
                     viewModel = viewModel,
                     onBack = navController::popBackStack,
+                    onEditRelationship = { id ->
+                        navController.popBackStack()
+                        navController.navigate(Routes.relationEditor(relationshipId = id))
+                    },
                 )
             }
             composable(Routes.Settings) {

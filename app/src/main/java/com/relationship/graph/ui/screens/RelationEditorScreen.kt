@@ -62,6 +62,7 @@ fun RelationEditorScreen(
     initialPersonId: String?,
     viewModel: RelationshipViewModel,
     onBack: () -> Unit,
+    onEditRelationship: (String) -> Unit = {},
 ) {
     val existing = state.relationship(relationshipId)
     val defaultFirst = existing?.fromPersonId ?: initialPersonId ?: state.people.firstOrNull()?.id
@@ -92,6 +93,9 @@ fun RelationEditorScreen(
     var typePickerVisible by remember { mutableStateOf(false) }
     var customTypeDialog by remember { mutableStateOf(false) }
     var kinshipConflict by remember { mutableStateOf<KinshipValidator.KinshipConflict?>(null) }
+    var duplicateRelationship by remember {
+        mutableStateOf<com.relationship.graph.data.local.RelationshipEntity?>(null)
+    }
     var validating by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
@@ -277,21 +281,33 @@ fun RelationEditorScreen(
                             relationTypeId = type.id,
                             existing = existing,
                         )
-                        validating = false
-                        val conflict = result.conflicts.firstOrNull()
-                        if (conflict != null) {
-                            kinshipConflict = conflict
-                        } else {
-                            viewModel.saveRelationship(
-                                relationshipId = relationshipId,
+                        val duplicate = if (result.conflicts.isEmpty()) {
+                            viewModel.findDuplicateRelationship(
                                 fromPersonId = fromPersonId,
                                 toPersonId = toPersonId,
                                 relationTypeId = type.id,
-                                note = note,
-                                marriageKinshipMode = marriageKinshipMode,
                                 existing = existing,
                             )
-                            onBack()
+                        } else {
+                            null
+                        }
+                        validating = false
+                        val conflict = result.conflicts.firstOrNull()
+                        when {
+                            conflict != null -> kinshipConflict = conflict
+                            duplicate != null -> duplicateRelationship = duplicate
+                            else -> {
+                                viewModel.saveRelationship(
+                                    relationshipId = relationshipId,
+                                    fromPersonId = fromPersonId,
+                                    toPersonId = toPersonId,
+                                    relationTypeId = type.id,
+                                    note = note,
+                                    marriageKinshipMode = marriageKinshipMode,
+                                    existing = existing,
+                                )
+                                onBack()
+                            }
                         }
                     }
                 },
@@ -329,6 +345,34 @@ fun RelationEditorScreen(
             confirmButton = {
                 TextButton(onClick = { kinshipConflict = null }) {
                     Text("知道了")
+                }
+            },
+        )
+    }
+
+    duplicateRelationship?.let { duplicate ->
+        val dupFrom = state.person(duplicate.fromPersonId)?.name ?: "未知"
+        val dupTo = state.person(duplicate.toPersonId)?.name ?: "未知"
+        val dupTypeName = state.relationType(duplicate.relationTypeId)?.name ?: "同类型"
+        AlertDialog(
+            onDismissRequest = { duplicateRelationship = null },
+            title = { Text("关系已存在") },
+            text = {
+                Text("「$dupFrom」与「$dupTo」之间已有「$dupTypeName」关系，无需重复添加。")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val targetId = duplicate.id
+                    duplicateRelationship = null
+                    onBack()
+                    onEditRelationship(targetId)
+                }) {
+                    Text("去编辑")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { duplicateRelationship = null }) {
+                    Text("返回修改")
                 }
             },
         )

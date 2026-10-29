@@ -1166,6 +1166,8 @@ object InferenceEngine {
     ): String {
         // 性别缺失时：女性同胞必为姑姑/姨妈（均为表亲）；男性同胞可用配偶或另一位
         // 家长的性别反推（配偶是母亲则本人是父亲，叔伯为堂）。
+        // 已知限制：反推基于异性配偶假设，同性伴侣数据下堂/表可能推错方向，
+        // 此时界面以「堂/表X」双称谓兜底（详见 README「已知限制」）。
         val parentGender = effectiveGender(parent, parentEdge?.parentRoleGender)
             .takeUnless { it == Gender.UNSPECIFIED }
             ?: otherParentGender?.let { if (it == Gender.MALE) Gender.FEMALE else Gender.MALE }

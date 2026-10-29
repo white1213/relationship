@@ -15,6 +15,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -27,6 +28,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.relationship.graph.data.kinship.KinshipCommitResult
 import com.relationship.graph.data.kinship.KinshipGroup
 import com.relationship.graph.data.kinship.KinshipParseResult
 import com.relationship.graph.data.kinship.KinshipTermCatalog
@@ -39,17 +41,20 @@ import com.relationship.graph.ui.components.PersonAvatar
 import kotlinx.coroutines.launch
 
 /** 句式主语写「我」时绑定到设置里唯一的「我」。 */
-internal fun kinshipPersonFor(state: AppUiState, name: String): PersonEntity? {
+internal fun kinshipPersonsFor(state: AppUiState, name: String): List<PersonEntity> {
     val trimmed = name.trim()
     if (trimmed == "我" || trimmed == "自己") {
-        return state.myPersonId?.let { id -> state.people.firstOrNull { it.id == id } }
+        return state.myPersonId
+            ?.let { id -> state.people.firstOrNull { it.id == id } }
+            ?.let { listOf(it) }
+            ?: emptyList()
     }
-    return state.people.firstOrNull { it.name == trimmed }
+    return state.people.filter { it.name == trimmed }
 }
 
 /**
- * 一句话录入的预览确认弹窗：解析结果一目了然，
- * 库里没有的人物标出来并可在确认时补建（只填姓名和性别）。
+ * 一句话录入的预览确认弹窗：解析结果一目了然；库中恰好一位同名时自动绑定，
+ * 多位同名时内联列出供选择，避免静默绑错人；库里没有的人物可补建（姓名+性别）。
  */
 @Composable
 fun KinshipSentenceDialog(
@@ -57,15 +62,25 @@ fun KinshipSentenceDialog(
     state: AppUiState,
     viewModel: RelationshipViewModel,
     onDismiss: () -> Unit,
+    onEditRelationship: (String) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var subjectGender by remember { mutableStateOf(Gender.UNSPECIFIED) }
     var relativeGender by remember { mutableStateOf(Gender.UNSPECIFIED) }
     var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var duplicateId by remember { mutableStateOf<String?>(null) }
 
-    val subjectPerson = kinshipPersonFor(state, parsed.subjectName)
-    val relativePerson = kinshipPersonFor(state, parsed.relativeName)
+    val subjectOptions = remember(parsed) { kinshipPersonsFor(state, parsed.subjectName) }
+    val relativeOptions = remember(parsed) { kinshipPersonsFor(state, parsed.relativeName) }
+    var subjectChoice by remember(parsed) {
+        mutableStateOf(initialChoiceOf(subjectOptions))
+    }
+    var relativeChoice by remember(parsed) {
+        mutableStateOf(initialChoiceOf(relativeOptions))
+    }
+
+    val ready = subjectChoice != null && relativeChoice != null
 
     AlertDialog(
         onDismissRequest = { if (!saving) onDismiss() },
@@ -76,20 +91,28 @@ fun KinshipSentenceDialog(
                     text = "${parsed.subjectName} 是 ${parsed.relativeName} 的${parsed.spec.term}",
                     style = MaterialTheme.typography.titleMedium,
                 )
-                KinshipPersonResolutionRow(
-                    name = parsed.subjectName,
-                    person = subjectPerson,
+                KinshipPersonOptionsRow(
+                    label = parsed.subjectName,
+                    options = subjectOptions,
+                    choice = subjectChoice,
+                    onChoice = { subjectChoice = it },
                     gender = subjectGender,
                     onGenderChange = { subjectGender = it },
                 )
-                KinshipPersonResolutionRow(
-                    name = parsed.relativeName,
-                    person = relativePerson,
+                KinshipPersonOptionsRow(
+                    label = parsed.relativeName,
+                    options = relativeOptions,
+                    choice = relativeChoice,
+                    onChoice = { relativeChoice = it },
                     gender = relativeGender,
                     onGenderChange = { relativeGender = it },
                 )
                 error?.let {
-                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        it,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
             }
         },
@@ -98,30 +121,47 @@ fun KinshipSentenceDialog(
                 onClick = {
                     scope.launch {
                         saving = true
+                        error = null
+                        duplicateId = null
                         val result = viewModel.commitKinshipEntry(
                             subjectName = parsed.subjectName,
                             relativeName = parsed.relativeName,
                             spec = parsed.spec,
-                            subjectPersonId = subjectPerson?.id,
-                            relativePersonId = relativePerson?.id,
+                            subjectPersonId = chosenPersonId(subjectChoice, subjectOptions),
+                            relativePersonId = chosenPersonId(relativeChoice, relativeOptions),
                             subjectGender = subjectGender,
                             relativeGender = relativeGender,
                         )
                         saving = false
-                        if (result == null) {
-                            onDismiss()
-                        } else {
-                            error = result
+                        when (result) {
+                            is KinshipCommitResult.Success -> onDismiss()
+                            is KinshipCommitResult.Duplicate -> {
+                                error = result.message
+                                duplicateId = result.relationshipId
+                            }
+                            is KinshipCommitResult.Failure -> error = result.message
                         }
                     }
                 },
-                enabled = !saving,
+                enabled = ready && !saving,
             ) {
                 Text(if (saving) "正在保存…" else "确认写入")
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss, enabled = !saving) { Text("取消") }
+            Row {
+                duplicateId?.let { id ->
+                    TextButton(
+                        onClick = {
+                            duplicateId = null
+                            onDismiss()
+                            onEditRelationship(id)
+                        },
+                        enabled = !saving,
+                    ) { Text("去编辑已有关系") }
+                }
+                TextButton(onClick = onDismiss, enabled = !saving) { Text("取消") }
+            }
         },
     )
 }
@@ -137,6 +177,7 @@ fun QuickAddKinshipDialog(
     state: AppUiState,
     viewModel: RelationshipViewModel,
     onDismiss: () -> Unit,
+    onEditRelationship: (String) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var selectedGroup by rememberSaveable { mutableStateOf(KinshipGroup.DIRECT) }
@@ -146,6 +187,7 @@ fun QuickAddKinshipDialog(
     var newRelativeGender by remember { mutableStateOf(Gender.UNSPECIFIED) }
     var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var duplicateId by remember { mutableStateOf<String?>(null) }
 
     val spec = selectedSpec
     val candidates = state.people
@@ -255,7 +297,11 @@ fun QuickAddKinshipDialog(
                     }
                 }
                 error?.let {
-                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        it,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
             }
         },
@@ -268,6 +314,8 @@ fun QuickAddKinshipDialog(
                         onClick = {
                             scope.launch {
                                 saving = true
+                                error = null
+                                duplicateId = null
                                 val result = viewModel.commitKinshipEntry(
                                     subjectName = person.name,
                                     relativeName = query.trim(),
@@ -277,10 +325,13 @@ fun QuickAddKinshipDialog(
                                     relativeGender = newRelativeGender,
                                 )
                                 saving = false
-                                if (result == null) {
-                                    onDismiss()
-                                } else {
-                                    error = result
+                                when (result) {
+                                    is KinshipCommitResult.Success -> onDismiss()
+                                    is KinshipCommitResult.Duplicate -> {
+                                        error = result.message
+                                        duplicateId = result.relationshipId
+                                    }
+                                    is KinshipCommitResult.Failure -> error = result.message
                                 }
                             }
                         },
@@ -293,6 +344,16 @@ fun QuickAddKinshipDialog(
         },
         dismissButton = {
             Row {
+                duplicateId?.let { id ->
+                    TextButton(
+                        onClick = {
+                            duplicateId = null
+                            onDismiss()
+                            onEditRelationship(id)
+                        },
+                        enabled = !saving,
+                    ) { Text("去编辑已有关系") }
+                }
                 if (spec != null) {
                     TextButton(
                         onClick = {
@@ -310,51 +371,101 @@ fun QuickAddKinshipDialog(
     )
 }
 
+private const val CREATE_NEW = "__create__"
+
+private fun initialChoiceOf(options: List<PersonEntity>): String? = when (options.size) {
+    1 -> options[0].id
+    0 -> CREATE_NEW
+    else -> null
+}
+
+private fun chosenPersonId(choice: String?, options: List<PersonEntity>): String? =
+    if (choice == null || choice == CREATE_NEW) {
+        null
+    } else {
+        options.firstOrNull { it.id == choice }?.id
+    }
+
 @Composable
-private fun KinshipPersonResolutionRow(
-    name: String,
-    person: PersonEntity?,
+private fun KinshipPersonOptionsRow(
+    label: String,
+    options: List<PersonEntity>,
+    choice: String?,
+    onChoice: (String?) -> Unit,
     gender: Gender,
     onGenderChange: (Gender) -> Unit,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        if (person != null) {
-            PersonAvatar(person = person, size = 40.dp)
+    when {
+        options.size >= 2 -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                "匹配到 ${options.size} 位同名「$label」，请选择：",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            options.forEach { option ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onChoice(option.id) },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(
+                        selected = choice == option.id,
+                        onClick = { onChoice(option.id) },
+                    )
+                    PersonAvatar(person = option, size = 34.dp)
+                    Text(
+                        text = option.name,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(start = 8.dp),
+                    )
+                    if (option.phone.isNotBlank()) {
+                        Text(
+                            text = option.phone,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+        options.size == 1 -> Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            PersonAvatar(person = options[0], size = 40.dp)
             Column {
-                Text(person.name, style = MaterialTheme.typography.bodyLarge)
+                Text(options[0].name, style = MaterialTheme.typography.bodyLarge)
                 Text(
                     "库中已存在",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-        } else {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    "将新建：$name",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Gender.entries.forEach { option ->
-                        FilterChip(
-                            selected = gender == option,
-                            onClick = { onGenderChange(option) },
-                            label = {
-                                Text(
-                                    when (option) {
-                                        Gender.MALE -> "男"
-                                        Gender.FEMALE -> "女"
-                                        Gender.UNSPECIFIED -> "未知"
-                                    },
-                                )
-                            },
-                        )
-                    }
+        }
+        else -> Column(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                "将新建：$label",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Gender.entries.forEach { option ->
+                    FilterChip(
+                        selected = gender == option,
+                        onClick = { onGenderChange(option) },
+                        label = {
+                            Text(
+                                when (option) {
+                                    Gender.MALE -> "男"
+                                    Gender.FEMALE -> "女"
+                                    Gender.UNSPECIFIED -> "未知"
+                                },
+                            )
+                        },
+                    )
                 }
             }
         }

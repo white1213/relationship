@@ -25,7 +25,9 @@ import com.relationship.graph.data.local.RelativeAgeOrderEntity
 import com.relationship.graph.data.local.TagEntity
 import com.relationship.graph.data.local.BirthdayCalendar
 import com.relationship.graph.data.calendar.LunarDates
+import com.relationship.graph.data.kinship.KinshipCommitResult
 import com.relationship.graph.data.kinship.KinshipTermSpec
+import com.relationship.graph.data.kinship.RelationshipDuplicates
 import com.relationship.graph.reminder.BirthdayReminderScheduler
 import com.relationship.graph.data.inference.InferenceEngine
 import com.relationship.graph.data.inference.InferenceConfirmationMode
@@ -316,7 +318,7 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
 
     /**
      * 一句话录入 / 详情页快建共用的提交入口：缺的人物按姓名补建，
-     * 自定义关系类型按需创建，保存前做辈分校验。返回 null 表示成功。
+     * 自定义关系类型按需创建，保存前做辈分校验与重复关系检测。
      */
     suspend fun commitKinshipEntry(
         subjectName: String,
@@ -326,20 +328,20 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
         relativePersonId: String?,
         subjectGender: Gender = Gender.UNSPECIFIED,
         relativeGender: Gender = Gender.UNSPECIFIED,
-    ): String? {
+    ): KinshipCommitResult {
         val people = repository.people.first()
         val subject = subjectPersonId?.let { id -> people.firstOrNull { it.id == id } }
             ?: people.firstOrNull { it.name == subjectName.trim() }
             ?: createPersonNow(subjectName, subjectGender)
-            ?: return "创建人物「${subjectName.trim()}」失败"
+            ?: return KinshipCommitResult.Failure("创建人物「${subjectName.trim()}」失败")
         val relative = relativePersonId?.let { id -> people.firstOrNull { it.id == id } }
             ?: people.firstOrNull { it.name == relativeName.trim() }
             ?: createPersonNow(relativeName, relativeGender)
-            ?: return "创建人物「${relativeName.trim()}」失败"
-        if (subject.id == relative.id) return "两个人不能是同一位"
+            ?: return KinshipCommitResult.Failure("创建人物「${relativeName.trim()}」失败")
+        if (subject.id == relative.id) return KinshipCommitResult.Failure("两个人不能是同一位")
 
         val typeId = spec.presetTypeId ?: resolveKinshipCustomTypeId(spec)
-            ?: return "创建关系类型「${spec.customName}」失败"
+            ?: return KinshipCommitResult.Failure("创建关系类型「${spec.customName}」失败")
         val (fromPersonId, toPersonId) = if (spec.subjectIsFrom) {
             subject.id to relative.id
         } else {
@@ -351,7 +353,20 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
             relationTypeId = typeId,
             existing = null,
         )
-        validation.conflicts.firstOrNull()?.let { return it.message }
+        validation.conflicts.firstOrNull()?.let { return KinshipCommitResult.Failure(it.message) }
+        val duplicate = RelationshipDuplicates.find(
+            relationships = repository.relationships.first(),
+            relationTypes = repository.relationTypes.first(),
+            fromPersonId = fromPersonId,
+            toPersonId = toPersonId,
+            relationTypeId = typeId,
+        )
+        if (duplicate != null) {
+            return KinshipCommitResult.Duplicate(
+                relationshipId = duplicate.id,
+                message = "「${subject.name}」与「${relative.name}」之间已有同类型关系",
+            )
+        }
 
         val now = System.currentTimeMillis()
         val relationship = RelationshipEntity(
@@ -367,8 +382,23 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
         repository.saveRelationship(relationship)
         pushUndo(label = "新增关系") { repository.deleteRelationship(relationship) }
         sendMessage("已添加关系：${subject.name} 与 ${relative.name}")
-        return null
+        return KinshipCommitResult.Success
     }
+
+    /** 编辑表单保存前的重复关系检测，命中时由 UI 弹窗拦截。 */
+    suspend fun findDuplicateRelationship(
+        fromPersonId: String,
+        toPersonId: String,
+        relationTypeId: String,
+        existing: RelationshipEntity?,
+    ): RelationshipEntity? = RelationshipDuplicates.find(
+        relationships = repository.relationships.first(),
+        relationTypes = repository.relationTypes.first(),
+        fromPersonId = fromPersonId,
+        toPersonId = toPersonId,
+        relationTypeId = relationTypeId,
+        excludeRelationshipId = existing?.id,
+    )
 
     private suspend fun createPersonNow(name: String, gender: Gender): PersonEntity? {
         val trimmed = name.trim()
