@@ -353,25 +353,34 @@ sealed interface KinshipParseResult {
         val subjectName: String,
         val relativeName: String,
         val spec: KinshipTermSpec,
+        // 存在句（「老王有个舅舅」）解析出的占位主语：应该建占位人物而不是同名真人。
+        val subjectIsPlaceholder: Boolean = false,
     ) : KinshipParseResult
 
     data class Failure(val message: String) : KinshipParseResult
 }
 
 /**
- * 解析「A 是 B 的称谓」与「A 是 B 的妈妈的哥哥」这类句子，纯本地、离线可用。
+ * 解析「A 是 B 的称谓」「A 是 B 的妈妈的哥哥」「B 有个称谓」三类句子，纯本地、离线可用。
  *
  * 句式边界（均为「安全失败」：明确报错，不会错误绑定）：
- * - 只支持「A 是 B 的…」结构，人名中不能含「是」或「的」；
+ * - 只支持上述结构，人名中不能含「是」「的」「有」；
  * - 组合链中的每一步都必须在词表内；「爷爷的儿子」这类多解链条不支持。
  */
 object KinshipSentenceParser {
 
+    /** 占位人物名：只知称谓不知真名时按「谁的什么亲」生成，如「老王的舅舅」。 */
+    fun placeholderNameOf(relativeName: String, term: String): String =
+        "${relativeName.trim()}的${term.trim()}"
+
     fun parse(raw: String): KinshipParseResult {
         val text = raw.trim().trimEnd('.', '。', '，', ',', '!', '！', '?', '？', '、', ' ')
         if (text.isBlank()) return KinshipParseResult.Failure("请输入一句话")
+        if (!text.contains("是") && !text.contains("有个") && !text.contains("有一个")) {
+            return KinshipParseResult.Failure("请用「某人 是 某人 的称谓」或「某人 有个 称谓」的格式")
+        }
         if (!text.contains("是")) {
-            return KinshipParseResult.Failure("请用「某人 是 某人 的称谓」的格式")
+            return parseExistence(text)
         }
         val parts = text.split("是", limit = 2)
         val subjectName = parts[0].trim()
@@ -407,6 +416,30 @@ object KinshipSentenceParser {
             subjectName = subjectName,
             relativeName = relativeName,
             spec = spec,
+        )
+    }
+
+    /** 存在句：「老王有个舅舅」「我有个三哥」——只知道有这层关系，不知道对方真名。 */
+    private fun parseExistence(text: String): KinshipParseResult {
+        val separator = when {
+            text.contains("有一个") -> "有一个"
+            text.contains("有个") -> "有个"
+            else -> return KinshipParseResult.Failure("没认出句式，例如「老王 有个 舅舅」")
+        }
+        val parts = text.split(separator, limit = 2)
+        val relativeName = parts[0].trim()
+        val termText = parts[1].trim()
+        if (relativeName.isBlank() || termText.isBlank()) {
+            return KinshipParseResult.Failure("没认出句式，例如「老王 有个 舅舅」")
+        }
+        val spec = KinshipTermCatalog.lookup(termText)
+            ?: return KinshipParseResult.Failure("暂不认识称谓「$termText」")
+        val placeholder = placeholderNameOf(relativeName, spec.term)
+        return KinshipParseResult.Success(
+            subjectName = placeholder,
+            relativeName = relativeName,
+            spec = spec,
+            subjectIsPlaceholder = true,
         )
     }
 

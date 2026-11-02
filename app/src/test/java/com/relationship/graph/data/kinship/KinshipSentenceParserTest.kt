@@ -99,4 +99,41 @@ class KinshipSentenceParserTest {
         val grouped = KinshipTermCatalog.panelGroups.flatMap { it.second }
         assertEquals(KinshipTermCatalog.all.size, grouped.size)
     }
+
+    @Test
+    fun existenceSentenceCreatesPlaceholderSubject() {
+        val result = KinshipSentenceParser.parse("老王有个舅舅")
+
+        assertTrue(result is KinshipParseResult.Success)
+        result as KinshipParseResult.Success
+        assertEquals("老王的舅舅", result.subjectName)
+        assertEquals("老王", result.relativeName)
+        assertEquals("舅舅", result.spec.term)
+        assertTrue(result.subjectIsPlaceholder)
+    }
+
+    @Test
+    fun existenceSentenceSupportsRankingPrefixAndAltPhrase() {
+        assertEquals(
+            "老王的舅舅",
+            (KinshipSentenceParser.parse("老王有个三舅") as KinshipParseResult.Success).subjectName,
+        )
+        assertEquals(
+            "小明的哥哥",
+            (KinshipSentenceParser.parse("小明有一个哥哥") as KinshipParseResult.Success).subjectName,
+        )
+    }
+
+    @Test
+    fun existenceSentenceRejectsUnknownTerm() {
+        val result = KinshipSentenceParser.parse("老王有个邻居")
+        assertTrue(result is KinshipParseResult.Failure)
+        assertTrue((result as KinshipParseResult.Failure).message.contains("邻居"))
+    }
+
+    @Test
+    fun normalSentenceIsNotPlaceholder() {
+        val result = KinshipSentenceParser.parse("老王是小明的舅舅")
+        assertFalse((result as KinshipParseResult.Success).subjectIsPlaceholder)
+    }
 }

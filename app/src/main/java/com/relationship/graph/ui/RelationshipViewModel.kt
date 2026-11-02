@@ -27,6 +27,7 @@ import com.relationship.graph.data.local.BirthdayCalendar
 import com.relationship.graph.data.calendar.LunarDates
 import com.relationship.graph.data.kinship.KinshipCommitResult
 import com.relationship.graph.data.kinship.KinshipTermSpec
+import com.relationship.graph.data.kinship.PlaceholderResolver
 import com.relationship.graph.data.kinship.RelationshipDuplicates
 import com.relationship.graph.reminder.BirthdayReminderScheduler
 import com.relationship.graph.data.inference.InferenceEngine
@@ -281,6 +282,9 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
                     lunarDeathMonth = if (usesLunarDeath) lunarDeathMonth else null,
                     lunarDeathDay = if (usesLunarDeath) lunarDeathDay else null,
                     isLeapDeathMonth = if (usesLunarDeath) isLeapDeathMonth else null,
+                    // 占位人物只在没改名时保留标记；改了名即视为补全真名。
+                    isPlaceholder = existing?.isPlaceholder == true &&
+                        name.trim() == existing.name,
                 ),
                 tagNames = tagNames,
             )
@@ -317,8 +321,9 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
     }
 
     /**
-     * 一句话录入 / 详情页快建共用的提交入口：缺的人物按姓名补建，
+     * 一句话录入 / 详情页快建共用的提交入口：缺的人物按姓名补建（可建占位人物），
      * 自定义关系类型按需创建，保存前做辈分校验与重复关系检测。
+     * 主语命中占位人物时视为补全真名：改名复用，不新建关系。
      */
     suspend fun commitKinshipEntry(
         subjectName: String,
@@ -328,15 +333,30 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
         relativePersonId: String?,
         subjectGender: Gender = Gender.UNSPECIFIED,
         relativeGender: Gender = Gender.UNSPECIFIED,
+        subjectIsPlaceholder: Boolean = false,
+        relativeIsPlaceholder: Boolean = false,
     ): KinshipCommitResult {
         val people = repository.people.first()
+        var filledFromPlaceholder = false
         val subject = subjectPersonId?.let { id -> people.firstOrNull { it.id == id } }
             ?: people.firstOrNull { it.name == subjectName.trim() }
-            ?: createPersonNow(subjectName, subjectGender)
+            ?: run {
+                val fillTarget = if (!subjectIsPlaceholder) {
+                    PlaceholderResolver.findFillTarget(people, relativeName, spec)
+                } else {
+                    null
+                }
+                if (fillTarget != null) {
+                    filledFromPlaceholder = true
+                    renamePerson(fillTarget, subjectName.trim())
+                } else {
+                    createPersonNow(subjectName, subjectGender, subjectIsPlaceholder)
+                }
+            }
             ?: return KinshipCommitResult.Failure("创建人物「${subjectName.trim()}」失败")
         val relative = relativePersonId?.let { id -> people.firstOrNull { it.id == id } }
             ?: people.firstOrNull { it.name == relativeName.trim() }
-            ?: createPersonNow(relativeName, relativeGender)
+            ?: createPersonNow(relativeName, relativeGender, relativeIsPlaceholder)
             ?: return KinshipCommitResult.Failure("创建人物「${relativeName.trim()}」失败")
         if (subject.id == relative.id) return KinshipCommitResult.Failure("两个人不能是同一位")
 
@@ -362,10 +382,16 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
             relationTypeId = typeId,
         )
         if (duplicate != null) {
-            return KinshipCommitResult.Duplicate(
-                relationshipId = duplicate.id,
-                message = "「${subject.name}」与「${relative.name}」之间已有同类型关系",
-            )
+            // 补全占位人物时，关系本来就已存在，改名成功即可。
+            return if (filledFromPlaceholder) {
+                sendMessage("已补全真名：${subject.name}")
+                KinshipCommitResult.Success
+            } else {
+                KinshipCommitResult.Duplicate(
+                    relationshipId = duplicate.id,
+                    message = "「${subject.name}」与「${relative.name}」之间已有同类型关系",
+                )
+            }
         }
 
         val now = System.currentTimeMillis()
@@ -381,7 +407,13 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
         )
         repository.saveRelationship(relationship)
         pushUndo(label = "新增关系") { repository.deleteRelationship(relationship) }
-        sendMessage("已添加关系：${subject.name} 与 ${relative.name}")
+        sendMessage(
+            if (filledFromPlaceholder) {
+                "已补全真名：${subject.name}"
+            } else {
+                "已添加关系：${subject.name} 与 ${relative.name}"
+            },
+        )
         return KinshipCommitResult.Success
     }
 
@@ -400,7 +432,11 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
         excludeRelationshipId = existing?.id,
     )
 
-    private suspend fun createPersonNow(name: String, gender: Gender): PersonEntity? {
+    private suspend fun createPersonNow(
+        name: String,
+        gender: Gender,
+        placeholder: Boolean = false,
+    ): PersonEntity? {
         val trimmed = name.trim()
         if (trimmed.isEmpty()) return null
         val now = System.currentTimeMillis()
@@ -410,11 +446,22 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
             gender = gender,
             createdAt = now,
             updatedAt = now,
+            isPlaceholder = placeholder,
         )
         return runCatching {
             repository.savePerson(person = person, tagNames = emptyList())
             person
         }.getOrNull()
+    }
+
+    /** 占位人物补全真名：改名并清掉占位标记，标签原样保留。 */
+    private suspend fun renamePerson(person: PersonEntity, newName: String): PersonEntity {
+        val updated = person.copy(name = newName, isPlaceholder = false)
+        repository.savePerson(
+            person = updated,
+            tagNames = uiState.value.tagsByPerson[person.id].orEmpty().map { it.name },
+        )
+        return updated
     }
 
     private suspend fun resolveKinshipCustomTypeId(spec: KinshipTermSpec): String? {

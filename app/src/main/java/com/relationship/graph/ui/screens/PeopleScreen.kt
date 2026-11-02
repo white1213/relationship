@@ -165,6 +165,13 @@ fun PeopleScreen(
                                         text = person.name,
                                         style = MaterialTheme.typography.titleMedium,
                                     )
+                                    if (person.isPlaceholder) {
+                                        Text(
+                                            text = "待补名",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
                                     val secondary = listOf(person.phone, person.address)
                                         .filter(String::isNotBlank)
                                         .joinToString(" · ")

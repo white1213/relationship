@@ -153,6 +153,14 @@ fun PersonDetailScreen(
                 DetailText(label = "地址", value = it, modifier = Modifier.fillMaxWidth())
             }
 
+            if (person.isPlaceholder) {
+                CompletionHintCard(
+                    text = "「${person.name}」是占位人物，补全真名后称谓、搜索和图谱识别都会更准确。",
+                    actions = {
+                        OutlinedButton(onClick = onEdit) { Text("补全真名") }
+                    },
+                )
+            }
             if (person.gender == Gender.UNSPECIFIED) {
                 CompletionHintCard(
                     text = "「${person.name}」还没有性别，补全后才能显示「表哥」「婶婶」这类具体称谓。",

@@ -655,6 +655,27 @@ fun GraphCanvas(
                     )
                 }
 
+                if (person.isPlaceholder) {
+                    val badgeCenter = position + Offset(-radius * 0.78f, -radius * 0.78f)
+                    drawCircle(color = Color.White, radius = 10f, center = badgeCenter)
+                    drawCircle(color = Color(0xFF4A7AB5), radius = 8f, center = badgeCenter)
+                    val badge = textMeasurer.measure(
+                        AnnotatedString("待"),
+                        style = TextStyle(
+                            color = Color.White,
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Bold,
+                        ),
+                    )
+                    drawText(
+                        textLayoutResult = badge,
+                        topLeft = Offset(
+                            badgeCenter.x - badge.size.width / 2f,
+                            badgeCenter.y - badge.size.height / 2f,
+                        ),
+                    )
+                }
+
                 if (isMyPerson) {
                     val badgeCenter = position + Offset(radius * 0.78f, radius * 0.78f)
                     drawCircle(color = Color.White, radius = 11f, center = badgeCenter)

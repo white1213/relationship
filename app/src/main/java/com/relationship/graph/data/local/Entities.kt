@@ -30,6 +30,9 @@ data class PersonEntity(
     val lunarDeathMonth: Int? = null,
     val lunarDeathDay: Int? = null,
     val isLeapDeathMonth: Boolean? = null,
+    // v7：只知称谓不知真名时自动生成的占位人物（如「老王的舅舅」），补全真名后置回 false。
+    @ColumnInfo(defaultValue = "0")
+    val isPlaceholder: Boolean = false,
 ) {
     val deceased: Boolean
         get() = isDeceased == true

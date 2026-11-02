@@ -80,7 +80,7 @@ class Converters {
         StagedRelationshipEntity::class,
         MergeRecordEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -104,8 +104,18 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_3_4,
                     MIGRATION_4_5,
                     MIGRATION_5_6,
+                    MIGRATION_6_7,
                 )
                 .build()
+        }
+
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // people：占位人物标记（只知称谓不知真名时自动生成）。
+                database.execSQL(
+                    "ALTER TABLE `people` ADD COLUMN `isPlaceholder` INTEGER NOT NULL DEFAULT 0",
+                )
+            }
         }
 
         private val MIGRATION_5_6 = object : Migration(5, 6) {

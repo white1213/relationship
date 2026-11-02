@@ -34,6 +34,7 @@ import com.relationship.graph.data.kinship.KinshipParseResult
 import com.relationship.graph.data.kinship.KinshipTermCatalog
 import com.relationship.graph.data.kinship.KinshipTermSpec
 import com.relationship.graph.data.local.Gender
+import com.relationship.graph.data.kinship.PlaceholderResolver
 import com.relationship.graph.data.local.PersonEntity
 import com.relationship.graph.ui.AppUiState
 import com.relationship.graph.ui.RelationshipViewModel
@@ -98,6 +99,7 @@ fun KinshipSentenceDialog(
                     onChoice = { subjectChoice = it },
                     gender = subjectGender,
                     onGenderChange = { subjectGender = it },
+                    placeholderHint = parsed.subjectIsPlaceholder,
                 )
                 KinshipPersonOptionsRow(
                     label = parsed.relativeName,
@@ -131,6 +133,7 @@ fun KinshipSentenceDialog(
                             relativePersonId = chosenPersonId(relativeChoice, relativeOptions),
                             subjectGender = subjectGender,
                             relativeGender = relativeGender,
+                            subjectIsPlaceholder = parsed.subjectIsPlaceholder,
                         )
                         saving = false
                         when (result) {
@@ -185,6 +188,7 @@ fun QuickAddKinshipDialog(
     var query by rememberSaveable { mutableStateOf("") }
     var pickedRelative by remember { mutableStateOf<PersonEntity?>(null) }
     var newRelativeGender by remember { mutableStateOf(Gender.UNSPECIFIED) }
+    var unknownName by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var duplicateId by remember { mutableStateOf<String?>(null) }
@@ -235,14 +239,54 @@ fun QuickAddKinshipDialog(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     if (pickedRelative == null) {
-                        OutlinedTextField(
-                            value = query,
-                            onValueChange = { query = it; error = null },
-                            label = { Text("搜索或输入新人物姓名") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        LazyColumn(modifier = Modifier.heightIn(max = 280.dp)) {
+                        if (unknownName) {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(
+                                    text = "将新建占位人物：${PlaceholderResolver.placeholderName(person.name, spec.term)}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                                Text(
+                                    text = "真名以后在人物编辑里补，或下次输入真名时自动补全。",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Gender.entries.forEach { gender ->
+                                        FilterChip(
+                                            selected = newRelativeGender == gender,
+                                            onClick = { newRelativeGender = gender },
+                                            label = {
+                                                Text(
+                                                    when (gender) {
+                                                        Gender.MALE -> "男"
+                                                        Gender.FEMALE -> "女"
+                                                        Gender.UNSPECIFIED -> "未知"
+                                                    },
+                                                )
+                                            },
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            OutlinedTextField(
+                                value = query,
+                                onValueChange = { query = it; error = null },
+                                label = { Text("搜索或输入新人物姓名") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            TextButton(
+                                onClick = {
+                                    unknownName = true
+                                    error = null
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text("不知道对方名字")
+                            }
+                            LazyColumn(modifier = Modifier.heightIn(max = 280.dp)) {
                             if (canCreate) {
                                 item(key = "create") {
                                     Column(
@@ -288,6 +332,7 @@ fun QuickAddKinshipDialog(
                                 )
                             }
                         }
+                        }
                     } else {
                         val relative = pickedRelative!!
                         Text(
@@ -308,7 +353,7 @@ fun QuickAddKinshipDialog(
         confirmButton = {
             when {
                 spec == null -> {}
-                pickedRelative == null && !canCreate -> {}
+                pickedRelative == null && !canCreate && !unknownName -> {}
                 else -> {
                     TextButton(
                         onClick = {
@@ -318,11 +363,19 @@ fun QuickAddKinshipDialog(
                                 duplicateId = null
                                 val result = viewModel.commitKinshipEntry(
                                     subjectName = person.name,
-                                    relativeName = query.trim(),
+                                    relativeName = if (unknownName) {
+                                        PlaceholderResolver.placeholderName(
+                                            person.name,
+                                            spec.term,
+                                        )
+                                    } else {
+                                        query.trim()
+                                    },
                                     spec = spec,
                                     subjectPersonId = person.id,
                                     relativePersonId = pickedRelative?.id,
                                     relativeGender = newRelativeGender,
+                                    relativeIsPlaceholder = unknownName,
                                 )
                                 saving = false
                                 when (result) {
@@ -335,7 +388,7 @@ fun QuickAddKinshipDialog(
                                 }
                             }
                         },
-                        enabled = !saving && query.isNotBlank(),
+                        enabled = !saving && (unknownName || query.isNotBlank()),
                     ) {
                         Text(if (saving) "正在保存…" else "确认写入")
                     }
@@ -359,6 +412,7 @@ fun QuickAddKinshipDialog(
                         onClick = {
                             selectedSpec = null
                             pickedRelative = null
+                            unknownName = false
                             query = ""
                             error = null
                         },
@@ -394,6 +448,7 @@ private fun KinshipPersonOptionsRow(
     onChoice: (String?) -> Unit,
     gender: Gender,
     onGenderChange: (Gender) -> Unit,
+    placeholderHint: Boolean = false,
 ) {
     when {
         options.size >= 2 -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -447,10 +502,17 @@ private fun KinshipPersonOptionsRow(
         }
         else -> Column(modifier = Modifier.fillMaxWidth()) {
             Text(
-                "将新建：$label",
+                text = if (placeholderHint) "将新建占位人物：$label" else "将新建：$label",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.primary,
             )
+            if (placeholderHint) {
+                Text(
+                    text = "不知道真名时先占位，以后输入真名会自动补全。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Gender.entries.forEach { option ->
                     FilterChip(
