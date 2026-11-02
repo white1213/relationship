@@ -326,6 +326,43 @@ class RelationshipLabelsTest {
     }
 
     @Test
+    fun auntUncleRelationshipUsesRecordedTermInsteadOfGenericType() {
+        val type = com.relationship.graph.data.local.PresetRelationTypes.all
+            .first { it.id == com.relationship.graph.data.local.InferenceRelationTypeIds.AUNT_UNCLE }
+        val uncle = PersonEntity(id = "uncle", name = "老王的舅舅")
+        val anchor = PersonEntity(id = "anchor", name = "老王", gender = Gender.MALE)
+        val relationship = RelationshipEntity(
+            id = "uncle-anchor",
+            fromPersonId = uncle.id,
+            toPersonId = anchor.id,
+            relationTypeId = type.id,
+            labelOverride = "舅舅",
+            inverseLabelOverride = "外甥/外甥女",
+        )
+
+        assertEquals(
+            "舅舅",
+            relationshipLabelForPerson(
+                relationship,
+                type,
+                anchor.id,
+                otherPerson = uncle,
+                people = listOf(uncle, anchor),
+            ),
+        )
+        assertEquals(
+            "外甥/外甥女",
+            relationshipLabelForPerson(
+                relationship,
+                type,
+                uncle.id,
+                otherPerson = anchor,
+                people = listOf(uncle, anchor),
+            ),
+        )
+    }
+
+    @Test
     fun cousinTypeWithUnknownGenderKeepsGroupName() {
         val cousinType = RelationTypeEntity(
             id = "preset_biao_cousin",

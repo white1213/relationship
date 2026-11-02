@@ -29,7 +29,15 @@ data class KinshipTermSpec(
     val inverseLabelOverride: String? = null,
     val group: KinshipGroup = KinshipGroup.EXTENDED,
     val aliases: List<String> = emptyList(),
-)
+) {
+    /**
+     * 按「主语是相对人的 term」的语义，算出关系存储的 (from, to)。
+     * 例：主语X + 相对A + term「儿子」→ (A, X)，因为父母子女类型 from 是父母；
+     * term「舅舅」→ (X, A)，因为该类型 from 是长辈一方。
+     */
+    fun orientation(subjectId: String, relativeId: String): Pair<String, String> =
+        if (subjectIsFrom) subjectId to relativeId else relativeId to subjectId
+}
 
 object KinshipTermCatalog {
 

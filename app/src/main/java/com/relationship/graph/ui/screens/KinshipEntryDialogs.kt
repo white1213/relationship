@@ -89,7 +89,11 @@ fun KinshipSentenceDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    text = "${parsed.subjectName} 是 ${parsed.relativeName} 的${parsed.spec.term}",
+                    text = if (parsed.subjectIsPlaceholder) {
+                        "为「${parsed.relativeName}」添加占位亲人：${parsed.spec.term}"
+                    } else {
+                        "${parsed.subjectName} 是 ${parsed.relativeName} 的${parsed.spec.term}"
+                    },
                     style = MaterialTheme.typography.titleMedium,
                 )
                 KinshipPersonOptionsRow(
@@ -203,7 +207,13 @@ fun QuickAddKinshipDialog(
     AlertDialog(
         onDismissRequest = { if (!saving) onDismiss() },
         title = {
-            Text(if (spec == null) "给「${person.name}」添加亲人" else "${person.name} 是对方的${spec.term}")
+            Text(
+                if (spec == null) {
+                    "给「${person.name}」添加亲人"
+                } else {
+                    "对方 是「${person.name}」的${spec.term}"
+                },
+            )
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -234,7 +244,7 @@ fun QuickAddKinshipDialog(
                     }
                 } else {
                     Text(
-                        text = "${person.name} 是 对方 的${spec.term}",
+                        text = "对方 是「${person.name}」的${spec.term}",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -361,21 +371,21 @@ fun QuickAddKinshipDialog(
                                 saving = true
                                 error = null
                                 duplicateId = null
+                                // 快建语义：新人 是「本人」的 term，所以新人是主语、本人是相对人。
+                                val newPersonName = if (unknownName) {
+                                    PlaceholderResolver.placeholderName(person.name, spec.term)
+                                } else {
+                                    query.trim()
+                                }
                                 val result = viewModel.commitKinshipEntry(
-                                    subjectName = person.name,
-                                    relativeName = if (unknownName) {
-                                        PlaceholderResolver.placeholderName(
-                                            person.name,
-                                            spec.term,
-                                        )
-                                    } else {
-                                        query.trim()
-                                    },
+                                    subjectName = newPersonName,
+                                    relativeName = person.name,
                                     spec = spec,
-                                    subjectPersonId = person.id,
-                                    relativePersonId = pickedRelative?.id,
-                                    relativeGender = newRelativeGender,
-                                    relativeIsPlaceholder = unknownName,
+                                    subjectPersonId = pickedRelative?.id,
+                                    relativePersonId = person.id,
+                                    subjectGender = newRelativeGender,
+                                    relativeGender = person.gender,
+                                    subjectIsPlaceholder = unknownName,
                                 )
                                 saving = false
                                 when (result) {

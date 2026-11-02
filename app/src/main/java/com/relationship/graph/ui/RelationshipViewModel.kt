@@ -27,6 +27,7 @@ import com.relationship.graph.data.local.BirthdayCalendar
 import com.relationship.graph.data.calendar.LunarDates
 import com.relationship.graph.data.kinship.KinshipCommitResult
 import com.relationship.graph.data.kinship.KinshipTermSpec
+import com.relationship.graph.data.kinship.PlaceholderOrientationRepair
 import com.relationship.graph.data.kinship.PlaceholderResolver
 import com.relationship.graph.data.kinship.RelationshipDuplicates
 import com.relationship.graph.reminder.BirthdayReminderScheduler
@@ -167,6 +168,9 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
         viewModelScope.launch {
             runCatching { repository.ensurePresetRelationTypes() }
                 .onFailure { messageChannel.send(it.message ?: "关系类型初始化失败") }
+        }
+        viewModelScope.launch {
+            runCatching { repairPlaceholderOrientationsOnce() }
         }
         viewModelScope.launch {
             combine(
@@ -362,11 +366,7 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
 
         val typeId = spec.presetTypeId ?: resolveKinshipCustomTypeId(spec)
             ?: return KinshipCommitResult.Failure("创建关系类型「${spec.customName}」失败")
-        val (fromPersonId, toPersonId) = if (spec.subjectIsFrom) {
-            subject.id to relative.id
-        } else {
-            relative.id to subject.id
-        }
+        val (fromPersonId, toPersonId) = spec.orientation(subject.id, relative.id)
         val validation = validateRelationship(
             fromPersonId = fromPersonId,
             toPersonId = toPersonId,
@@ -462,6 +462,33 @@ class RelationshipViewModel(application: Application) : AndroidViewModel(applica
             tagNames = uiState.value.tagsByPerson[person.id].orEmpty().map { it.name },
         )
         return updated
+    }
+
+    /** v1.10.0 快建方向 bug 的一次性数据修复；每个安装只跑一次，失败则下次启动重试。 */
+    private suspend fun repairPlaceholderOrientationsOnce() {
+        val prefs = getApplication<Application>()
+            .getSharedPreferences("kinship_repair", android.content.Context.MODE_PRIVATE)
+        val key = "placeholder_orientation_repair_1_10_1"
+        if (prefs.getBoolean(key, false)) return
+        val flips = PlaceholderOrientationRepair.plan(
+            people = repository.people.first(),
+            relationships = repository.relationships.first(),
+            relationTypes = repository.relationTypes.first(),
+        )
+        var applied = 0
+        flips.forEach { flip ->
+            val relationship = repository.relationships.first()
+                .firstOrNull { it.id == flip.relationshipId } ?: return@forEach
+            repository.saveRelationship(
+                relationship.copy(
+                    fromPersonId = flip.fromPersonId,
+                    toPersonId = flip.toPersonId,
+                ),
+            )
+            applied++
+        }
+        prefs.edit().putBoolean(key, true).apply()
+        if (applied > 0) sendMessage("已修正 $applied 条占位关系方向")
     }
 
     private suspend fun resolveKinshipCustomTypeId(spec: KinshipTermSpec): String? {

@@ -132,8 +132,11 @@ private fun auntUncleLabelForPerson(
     personId: String,
     otherPerson: PersonEntity,
 ): String {
-    if (personId == relationship.toPersonId) return type.name
-    return when (type.name.trim()) {
+    // 录入时指定的具体称谓（如「舅舅」「叔叔」）优先于通用类型名。
+    if (personId == relationship.toPersonId) {
+        return relationship.labelOverride ?: type.name
+    }
+    val genderedFallback = when (type.name.trim()) {
         "姑姑", "姑父" -> when (otherPerson.gender) {
             Gender.MALE -> "侄子"
             Gender.FEMALE -> "侄女"
@@ -141,6 +144,7 @@ private fun auntUncleLabelForPerson(
         }
         else -> type.inverseName ?: type.name
     }
+    return relationship.inverseLabelOverride ?: genderedFallback
 }
 
 private fun directGenericLabel(
